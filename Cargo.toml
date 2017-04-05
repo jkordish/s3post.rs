@@ -1,0 +1,26 @@
+[package]
+name = "s3post"
+version = "0.0.1"
+authors = ["Joseph Kordish <joe@unicornclouds.com>"]
+
+description = "Post gzip compressed logs to S#"
+homepage = "https://github.com/jkordish/s3post"
+repository = "https://github.com/jkordish/s3post"
+
+readme = "README.md"
+license = "The MIT License (MIT)"
+
+keywords = [
+  "aws",
+  "logs"
+]
+
+[dependencies]
+flate2 = { version = "^0.2" }
+serde_json = "^0.9"
+crossbeam = "^0.2"
+rusoto = {version = "^0.23", default-features = false, features = ["s3"]}
+clippy = {version="*", optional = true}
+
+[features]
+default=[]
