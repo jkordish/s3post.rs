@@ -1,11 +1,11 @@
 [package]
-name = "s3post"
+name = "s3post.rs"
 version = "0.0.1"
 authors = ["Joseph Kordish <joe@unicornclouds.com>"]
 
-description = "Post gzip compressed logs to S#"
-homepage = "https://github.com/jkordish/s3post"
-repository = "https://github.com/jkordish/s3post"
+description = "Post gzip compressed logs to S3"
+homepage = "https://github.com/jkordish/s3post.rs"
+repository = "https://github.com/jkordish/s3post.rs"
 
 readme = "README.md"
 license = "The MIT License (MIT)"
@@ -15,11 +15,14 @@ keywords = [
   "logs"
 ]
 
+[[bin]]
+name = "s3post"
+
 [dependencies]
-flate2 = { version = "^0.2" }
-serde_json = "^0.9"
+flate2 = { version = "^0.2", features = ["miniz-sys"], default-features = false  }
 crossbeam = "^0.2"
-rusoto = {version = "^0.23", default-features = false, features = ["s3"]}
+chrono = "^0.3"
+rusoto = {version = "^0.24", default-features = false, features = ["s3"]}
 clippy = {version="*", optional = true}
 
 [features]
