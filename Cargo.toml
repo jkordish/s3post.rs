@@ -19,6 +19,7 @@ keywords = [
 name = "s3post"
 
 [dependencies]
+syslog = "^3"
 flate2 = { version = "^0.2", features = ["miniz-sys"], default-features = false  }
 crossbeam = "^0.2"
 chrono = "^0.3"

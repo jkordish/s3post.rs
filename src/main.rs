@@ -5,6 +5,7 @@ extern crate flate2;
 extern crate rusoto;
 extern crate crossbeam;
 extern crate chrono;
+extern crate syslog;
 
 use std::io;
 use std::io::prelude::*;
@@ -19,6 +20,7 @@ use flate2::write::GzEncoder;
 use chrono::prelude::Local;
 use chrono::{Datelike, Timelike, Duration};
 use crossbeam::scope;
+use syslog::{Facility, Severity};
 
 fn main() {
 
@@ -43,9 +45,6 @@ fn main() {
                 // add the current bytes to our data vector
                 data.extend(bytes);
                 if data.lines().count() >= MAX_LINES {
-                    println!("Len: {:?} Line Count: {:?}",
-                             data.len(),
-                             data.lines().count());
                     // send the data to the compress function
                     compress(data.as_slice());
                     // clear our data vector
@@ -54,9 +53,6 @@ fn main() {
                     time = Local::now();
                     timeout = time + Duration::seconds(MAX_TIMEOUT);
                 } else if data.len() >= MAX_BYTES {
-                    println!("Len: {:?} Line Count: {:?}",
-                             data.len(),
-                             data.lines().count());
                     // send the data to the compress function
                     compress(data.as_slice());
                     // clear our data vector
@@ -65,9 +61,6 @@ fn main() {
                     time = Local::now();
                     timeout = time + Duration::seconds(MAX_TIMEOUT);
                 } else if timeout <= time && !data.is_empty() {
-                    println!("Len: {:?} Line Count: {:?}",
-                             data.len(),
-                             data.lines().count());
                     // send the data to the compress function
                     compress(data.as_slice());
                     // clear our data vector
@@ -89,24 +82,23 @@ fn main() {
 }
 
 fn compress(bytes: &[u8]) {
-
-    // use our environment variable of hostname. will be essentially the CBID
-    let hostname = match env::var("HOSTNAME") {
-        Ok(hostname) => hostname,
-        Err(err) => panic!("Unable to get hostname. {}", err),
-    };
-
-    let timestamp = Local::now();
-
-    // setting the format for how we write out the file.
-    let file = format!("{}.{}-{}.raw.gz",
-                       timestamp.second(),
-                       timestamp.timestamp_subsec_millis(),
-                       &hostname);
-
     // our compression routine will be sent to another thread
     scope(|scope| {
         scope.spawn(move || {
+            // use our environment variable of hostname. will be essentially the CBID
+            let hostname = match env::var("HOSTNAME") {
+                Ok(hostname) => hostname,
+                Err(err) => panic!("Unable to get hostname. {}", err),
+            };
+
+            let timestamp = Local::now();
+
+            // setting the format for how we write out the file.
+            let file = format!("{}.{}-{}.raw.gz",
+                               timestamp.second(),
+                               timestamp.timestamp_subsec_millis(),
+                               &hostname);
+
             let mut output = File::create(&file).unwrap();
 
             let mut encoder = GzEncoder::new(Vec::new(), Compression::Default);
@@ -114,8 +106,6 @@ fn compress(bytes: &[u8]) {
             encoder.write_all(bytes).unwrap();
 
             let encoded = encoder.finish().unwrap();
-
-            println!("Writing to file: {}", &file);
 
             output.write_all(&encoded).unwrap();
 
@@ -125,19 +115,17 @@ fn compress(bytes: &[u8]) {
 }
 
 fn write_s3(file: &str) {
-
-    let timestamp = Local::now();
-    let path = format!("{}/{}/{}/{}/{}/{}",
-                       timestamp.year(),
-                       timestamp.month(),
-                       timestamp.day(),
-                       timestamp.hour(),
-                       timestamp.minute(),
-                       &file);
-    println!("{}", &path);
-
     scope(|scope| {
         scope.spawn(move || {
+
+            let timestamp = Local::now();
+            let path = format!("{}/{}/{}/{}/{}/{}",
+                               timestamp.year(),
+                               timestamp.month(),
+                               timestamp.day(),
+                               timestamp.hour(),
+                               timestamp.minute(),
+                               &file);
 
             let provider = match DefaultCredentialsProvider::new() {
                 Ok(provider) => provider,
@@ -161,6 +149,7 @@ fn write_s3(file: &str) {
             match log.read_to_end(&mut contents) {
                 Err(err) => panic!("Error opening file to send to S3: {}", err),
                 Ok(_) => {
+                    // need to build our request
                     let req = PutObjectRequest {
                         bucket: "jkordish-test".to_owned(),
                         key: path.to_owned(),
@@ -168,9 +157,28 @@ fn write_s3(file: &str) {
                         ..Default::default()
                     };
                     let result = s3.put_object(&req);
-                    Some(result);
-                    // remove the file after we processed it
-                    remove_file(&file);
+                    match result {
+                        Ok(_) => {
+                            // print notification to stdout.
+                            println!("Successfully wrote {}/{}", req.bucket, &path);
+                            // only remove the file if we are successful
+                            if remove_file(&file).is_ok() {
+                                println!("Removed file {}", &file);
+                            }
+                        }
+                        Err(e) => println!("Could not write file {} {}", &file, e),
+                    }
+                    // Send some notifications to SYSLOG
+                    match syslog::unix(Facility::LOG_SYSLOG) {
+                        Err(e) => println!("impossible to connect to syslog: {:?}", e),
+                        Ok(writer) => {
+                            let success = format!("wrote {}", &path);
+                            let failure = format!("unable to write {}", &path);
+                            if writer.send_3164(Severity::LOG_ALERT, &success).is_err() {
+                                writer.send_3164(Severity::LOG_ERR, &failure);
+                            }
+                        }
+                    }
                 }
             }
         });
