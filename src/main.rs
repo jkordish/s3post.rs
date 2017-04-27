@@ -44,6 +44,7 @@ fn main() {
             Ok(bytes) => {
                 // add the current bytes to our data vector
                 data.extend(bytes);
+                // evaulate if data and time meet of processing conditions
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
@@ -94,12 +95,13 @@ fn compress(bytes: &[u8]) {
 
             output.write_all(&encoded).unwrap();
 
-            write_s3(&file);
+            write_s3(&file, &encoded);
         });
     });
 }
 
-fn write_s3(file: &str) {
+fn write_s3(file: &str, log: &[u8]) {
+    // move to new thread
     scope(|scope| {
         scope.spawn(move || {
 
@@ -112,56 +114,57 @@ fn write_s3(file: &str) {
                                timestamp.minute(),
                                &file);
 
+            // set up our credentials provider for aws
             let provider = match DefaultCredentialsProvider::new() {
                 Ok(provider) => provider,
                 Err(err) => panic!("Unable to load credentials. {}", err),
             };
 
+            // obtain our aws default region so we know where to look
             let region = match env::var("AWS_DEFAULT_REGION") {
                 Ok(region) => region,
                 Err(err) => panic!("environment AWS_DEFAULT_REGION is not set. {}", err),
             };
 
+            // create our s3 client initialization
             let s3 = S3Client::new(default_tls_client().unwrap(),
                                    provider,
                                    Region::from_str(&region).unwrap());
 
-            // Open the gzip'd log file
-            let mut log = File::open(&file).unwrap();
             // create a u8 vector
             let mut contents: Vec<u8> = Vec::new();
+            // add our encoded log file to the vector
+            contents.extend(log);
+
             // if we can read the contents to the buffer we will attempt to send the log to s3
-            match log.read_to_end(&mut contents) {
-                Err(err) => panic!("Error opening file to send to S3: {}", err),
+            // need to build our request
+            let req = PutObjectRequest {
+                bucket: "jkordish-test".to_owned(),
+                key: path.to_owned(),
+                body: Some(contents),
+                ..Default::default()
+            };
+
+            match s3.put_object(&req) {
                 Ok(_) => {
-                    // need to build our request
-                    let req = PutObjectRequest {
-                        bucket: "jkordish-test".to_owned(),
-                        key: path.to_owned(),
-                        body: Some(contents),
-                        ..Default::default()
-                    };
-                    match s3.put_object(&req) {
-                        Ok(_) => {
-                            // print notification to stdout.
-                            println!("Successfully wrote {}/{}", &req.bucket, &path);
-                            // only remove the file if we are successful
-                            if remove_file(&file).is_ok() {
-                                println!("Removed file {}", &file);
-                            }
-                        }
-                        Err(e) => println!("Could not write file {} {}", &file, e),
+                    // print notification to stdout.
+                    println!("Successfully wrote {}/{}", &req.bucket, &path);
+                    // only remove the file if we are successful
+                    if remove_file(&file).is_ok() {
+                        println!("Removed file {}", &file);
                     }
-                    // Send some notifications to SYSLOG
-                    match syslog::unix(Facility::LOG_SYSLOG) {
-                        Err(e) => println!("impossible to connect to syslog: {:?}", e),
-                        Ok(writer) => {
-                            let success = format!("wrote {}/{}", &req.bucket, &path);
-                            let failure = format!("unable to write {}/{}", &req.bucket, &path);
-                            if writer.send_3164(Severity::LOG_ALERT, &success).is_err() {
-                                let _ = writer.send_3164(Severity::LOG_ERR, &failure);
-                            }
-                        }
+                }
+                Err(e) => println!("Could not write file {} {}", &file, e),
+            }
+
+            // Send some notifications to SYSLOG
+            match syslog::unix(Facility::LOG_SYSLOG) {
+                Err(e) => println!("impossible to connect to syslog: {:?}", e),
+                Ok(writer) => {
+                    let success = format!("wrote {}/{}", &req.bucket, &path);
+                    let failure = format!("unable to write {}/{}", &req.bucket, &path);
+                    if writer.send_3164(Severity::LOG_ALERT, &success).is_err() {
+                        let _ = writer.send_3164(Severity::LOG_ERR, &failure);
                     }
                 }
             }
