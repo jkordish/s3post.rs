@@ -44,23 +44,8 @@ fn main() {
             Ok(bytes) => {
                 // add the current bytes to our data vector
                 data.extend(bytes);
-                if data.lines().count() >= MAX_LINES {
-                    // send the data to the compress function
-                    compress(data.as_slice());
-                    // clear our data vector
-                    data.clear();
-                    // reset our timer
-                    time = Local::now();
-                    timeout = time + Duration::seconds(MAX_TIMEOUT);
-                } else if data.len() >= MAX_BYTES {
-                    // send the data to the compress function
-                    compress(data.as_slice());
-                    // clear our data vector
-                    data.clear();
-                    // reset our timer
-                    time = Local::now();
-                    timeout = time + Duration::seconds(MAX_TIMEOUT);
-                } else if timeout <= time && !data.is_empty() {
+                if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
+                   timeout <= time && !data.is_empty() {
                     // send the data to the compress function
                     compress(data.as_slice());
                     // clear our data vector
@@ -156,11 +141,10 @@ fn write_s3(file: &str) {
                         body: Some(contents),
                         ..Default::default()
                     };
-                    let result = s3.put_object(&req);
-                    match result {
+                    match s3.put_object(&req) {
                         Ok(_) => {
                             // print notification to stdout.
-                            println!("Successfully wrote {}/{}", req.bucket, &path);
+                            println!("Successfully wrote {}/{}", &req.bucket, &path);
                             // only remove the file if we are successful
                             if remove_file(&file).is_ok() {
                                 println!("Removed file {}", &file);
@@ -172,10 +156,10 @@ fn write_s3(file: &str) {
                     match syslog::unix(Facility::LOG_SYSLOG) {
                         Err(e) => println!("impossible to connect to syslog: {:?}", e),
                         Ok(writer) => {
-                            let success = format!("wrote {}", &path);
-                            let failure = format!("unable to write {}", &path);
+                            let success = format!("wrote {}/{}", &req.bucket, &path);
+                            let failure = format!("unable to write {}/{}", &req.bucket, &path);
                             if writer.send_3164(Severity::LOG_ALERT, &success).is_err() {
-                                writer.send_3164(Severity::LOG_ERR, &failure);
+                                let _ = writer.send_3164(Severity::LOG_ERR, &failure);
                             }
                         }
                     }
