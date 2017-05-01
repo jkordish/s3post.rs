@@ -11,6 +11,10 @@
 /target/
 
 #
+/cache/
+/201*/
+
+#
 debug/
 release/
 config/

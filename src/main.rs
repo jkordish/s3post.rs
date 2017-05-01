@@ -6,10 +6,12 @@ extern crate rusoto;
 extern crate crossbeam;
 extern crate chrono;
 extern crate syslog;
+extern crate walkdir;
 
 use std::io;
 use std::io::prelude::*;
-use std::fs::{File, remove_file};
+use std::fs::{File, remove_file, create_dir_all};
+use std::path::Path;
 use std::env;
 use std::str::FromStr;
 use rusoto::{DefaultCredentialsProvider, Region};
@@ -21,6 +23,7 @@ use chrono::prelude::Local;
 use chrono::{Datelike, Timelike, Duration};
 use crossbeam::scope;
 use syslog::{Facility, Severity};
+use walkdir::WalkDir;
 
 fn main() {
 
@@ -32,6 +35,9 @@ fn main() {
              MAX_LINES,
              MAX_BYTES,
              MAX_TIMEOUT);
+
+    // attempt to resend any logs that we might have not successfully sent
+    resend_logs();
 
     let reader = io::stdin();
     let mut buffer = reader.lock();
@@ -48,7 +54,7 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
-                    compress(data.as_slice());
+                    compress(data.as_slice(), time);
                     // clear our data vector
                     data.clear();
                     // reset our timer
@@ -57,6 +63,8 @@ fn main() {
                 } else {
                     // update the time
                     time = Local::now();
+                    // attempt to resend any logs that we might have not successfully sent
+                    resend_logs();
                 }
             }
             Err(err) => panic!(err),
@@ -67,7 +75,7 @@ fn main() {
     }
 }
 
-fn compress(bytes: &[u8]) {
+fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>) {
     // our compression routine will be sent to another thread
     scope(|scope| {
         scope.spawn(move || {
@@ -77,7 +85,13 @@ fn compress(bytes: &[u8]) {
                 Err(err) => panic!("Unable to get hostname. {}", err),
             };
 
-            let timestamp = Local::now();
+            // generate our local path
+            let path = format!("{}/{}/{}/{}/{}/",
+                               timestamp.year(),
+                               timestamp.month(),
+                               timestamp.day(),
+                               timestamp.hour(),
+                               timestamp.minute());
 
             // setting the format for how we write out the file.
             let file = format!("{}.{}-{}.raw.gz",
@@ -85,7 +99,9 @@ fn compress(bytes: &[u8]) {
                                timestamp.timestamp_subsec_millis(),
                                &hostname);
 
-            let mut output = File::create(&file).unwrap();
+            let _ = create_dir_all(&path);
+
+            let mut output = File::create(format!("{}{}", &path, &file)).unwrap();
 
             let mut encoder = GzEncoder::new(Vec::new(), Compression::Default);
 
@@ -95,24 +111,17 @@ fn compress(bytes: &[u8]) {
 
             output.write_all(&encoded).unwrap();
 
-            write_s3(&file, &encoded);
+            write_s3(&file, &path, &encoded);
         });
     });
 }
 
-fn write_s3(file: &str, log: &[u8]) {
+fn write_s3(file: &str, path: &str, log: &[u8]) {
     // move to new thread
     scope(|scope| {
         scope.spawn(move || {
 
-            let timestamp = Local::now();
-            let path = format!("{}/{}/{}/{}/{}/{}",
-                               timestamp.year(),
-                               timestamp.month(),
-                               timestamp.day(),
-                               timestamp.hour(),
-                               timestamp.minute(),
-                               &file);
+            let path = format!("{}/{}", &path, &file);
 
             // set up our credentials provider for aws
             let provider = match DefaultCredentialsProvider::new() {
@@ -150,8 +159,8 @@ fn write_s3(file: &str, log: &[u8]) {
                     // print notification to stdout.
                     println!("Successfully wrote {}/{}", &req.bucket, &path);
                     // only remove the file if we are successful
-                    if remove_file(&file).is_ok() {
-                        println!("Removed file {}", &file);
+                    if remove_file(&path).is_ok() {
+                        println!("Removed file {}", &path);
                     }
                 }
                 Err(e) => println!("Could not write file {} {}", &file, e),
@@ -170,4 +179,38 @@ fn write_s3(file: &str, log: &[u8]) {
             }
         });
     });
+}
+
+fn resend_logs() {
+
+    // create iterator over the directory
+    for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
+        //let entry = entry.unwrap();
+
+        // filter out gzip'd file suffixes
+        if entry.file_name()
+               .to_str()
+               .map(|s| s.ends_with(".gz"))
+               .unwrap() {
+
+            let filename = entry.file_name().to_str().unwrap();
+
+            // need to return only the parent and strip off the prefix ./
+            // this then is the path write_s3 is expecting
+            // there has to be a better way!
+            let path = Path::new(entry.path().parent().unwrap()).strip_prefix("./").unwrap();
+            let path = Path::new(path).to_str().unwrap();
+
+            let mut file = File::open(path).expect("Unable to read file");
+
+            // create a u8 vector
+            let mut contents: Vec<u8> = Vec::new();
+            // add our encoded log file to the vector
+            let _ = file.read_to_end(&mut contents);
+
+            println!("Found unsent log {}/{}", &path, &filename);
+            write_s3(filename, path, &contents);
+
+        }
+    }
 }

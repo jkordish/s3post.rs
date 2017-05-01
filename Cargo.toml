@@ -1,6 +1,6 @@
 [package]
 name = "s3post.rs"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Joseph Kordish <joe@unicornclouds.com>"]
 
 description = "Post gzip compressed logs to S3"
@@ -23,6 +23,7 @@ syslog = "^3"
 flate2 = { version = "^0.2", features = ["miniz-sys"], default-features = false  }
 crossbeam = "^0.2"
 chrono = "^0.3"
+walkdir = "^1"
 rusoto = {version = "^0.24", default-features = false, features = ["s3"]}
 clippy = {version="*", optional = true}
 
