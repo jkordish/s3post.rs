@@ -1,6 +1,10 @@
 #![cfg_attr(feature="clippy", plugin(clippy))]
-#![feature(plugin)]
+#![feature(custom_derive, plugin)]
 
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate serde_json;
 extern crate flate2;
 extern crate rusoto;
 extern crate crossbeam;
@@ -25,19 +29,57 @@ use crossbeam::scope;
 use syslog::{Facility, Severity};
 use walkdir::WalkDir;
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConfigFile {
+    cachedir: String,
+    role_arn: String,
+    region: String,
+    bucket: String,
+    prefix: String,
+    ip: String,
+}
+
+pub trait Config {
+    fn new(&self) -> ConfigFile;
+}
+
+
+impl Config for ConfigFile {
+    fn new(&self) -> ConfigFile {
+        ConfigFile {
+            cachedir: self.cachedir.clone(),
+            role_arn: self.role_arn.clone(),
+            region: self.region.clone(),
+            bucket: self.bucket.clone(),
+            prefix: self.prefix.clone(),
+            ip: self.ip.clone(),
+        }
+    }
+}
+
 fn main() {
+
+    let args: Vec<_> = env::args().collect();
+    if args.len() < 1 {
+        println!("Please specify the path to the config");
+    }
+
+    let mut file_open = File::open(&args[1]).expect("Unable to read config file");
+    let mut buf = String::new();
+    let _ = file_open.read_to_string(&mut buf).expect("Unable to read contents of file");
+    let config: ConfigFile = serde_json::from_str(&buf).expect("Unable to process config file");
 
     const MAX_LINES: usize = 50000;
     const MAX_BYTES: usize = 1000000; // 1M (this feels wrong though)
     const MAX_TIMEOUT: i64 = 5; // in seconds
 
-    println!("MAX_LINES: {}    MAX_BYTES: {}    MAX_TIMEOUT: {}",
+    println!("MAX_LINES:\t{}\nMAX_BYTES:\t{}\nMAX_TIMEOUT:\t{}",
              MAX_LINES,
              MAX_BYTES,
              MAX_TIMEOUT);
 
     // attempt to resend any logs that we might have not successfully sent
-    resend_logs();
+    resend_logs(config.clone());
 
     let reader = io::stdin();
     let mut buffer = reader.lock();
@@ -54,7 +96,7 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
-                    compress(data.as_slice(), time);
+                    compress(data.as_slice(), time, config.clone());
                     // clear our data vector
                     data.clear();
                     // reset our timer
@@ -64,7 +106,7 @@ fn main() {
                     // update the time
                     time = Local::now();
                     // attempt to resend any logs that we might have not successfully sent
-                    resend_logs();
+                    resend_logs(config.clone());
                 }
             }
             Err(err) => panic!(err),
@@ -75,7 +117,8 @@ fn main() {
     }
 }
 
-fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>) {
+fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: ConfigFile) -> () {
+
     // our compression routine will be sent to another thread
     scope(|scope| {
         scope.spawn(move || {
@@ -99,24 +142,33 @@ fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>) {
                                timestamp.timestamp_subsec_millis(),
                                &hostname);
 
-            let _ = create_dir_all(&path);
+            // append the cachedir so we write to the correct place
+            let fullpath = format!("{}/{}", config.cachedir, &path);
 
-            let mut output = File::create(format!("{}{}", &path, &file)).unwrap();
+            // create the directory structure
+            let _ = create_dir_all(&fullpath);
 
+            // create the file in the full path
+            let mut output = File::create(format!("{}{}", &fullpath, &file)).unwrap();
+
+            // create a gzip encoder
             let mut encoder = GzEncoder::new(Vec::new(), Compression::Default);
 
+            // encode the retrieved bytes
             encoder.write_all(bytes).unwrap();
+            let log = encoder.finish().unwrap();
 
-            let encoded = encoder.finish().unwrap();
+            // write out the encoded data to our file
+            output.write_all(&log).unwrap();
 
-            output.write_all(&encoded).unwrap();
-
-            write_s3(&file, &path, &encoded);
+            // call write_s3 to send the gzip'd file to s3
+            write_s3(config.clone(), &file, &path, &log);
         });
     });
 }
 
-fn write_s3(file: &str, path: &str, log: &[u8]) {
+fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8]) {
+
     // move to new thread
     scope(|scope| {
         scope.spawn(move || {
@@ -148,7 +200,7 @@ fn write_s3(file: &str, path: &str, log: &[u8]) {
             // if we can read the contents to the buffer we will attempt to send the log to s3
             // need to build our request
             let req = PutObjectRequest {
-                bucket: "jkordish-test".to_owned(),
+                bucket: config.bucket,
                 key: path.to_owned(),
                 body: Some(contents),
                 ..Default::default()
@@ -156,11 +208,25 @@ fn write_s3(file: &str, path: &str, log: &[u8]) {
 
             match s3.put_object(&req) {
                 Ok(_) => {
-                    // print notification to stdout.
-                    println!("Successfully wrote {}/{}", &req.bucket, &path);
+                    // Send some notifications to SYSLOG
+                    match syslog::unix(Facility::LOG_SYSLOG) {
+                        Err(e) => println!("impossible to connect to syslog: {:?}", e),
+                        Ok(writer) => {
+                            let success = format!("Successfully wrote {}/{}", &req.bucket, &path);
+                            let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
+                        }
+                    }
                     // only remove the file if we are successful
-                    if remove_file(&path).is_ok() {
-                        println!("Removed file {}", &path);
+                    let fullpath = format!("{}/{}", &config.cachedir, &path);
+                    if remove_file(&fullpath).is_ok() {
+                        // Send some notifications to SYSLOG
+                        match syslog::unix(Facility::LOG_SYSLOG) {
+                            Err(e) => println!("impossible to connect to syslog: {:?}", e),
+                            Ok(writer) => {
+                                let success = format!("Removed file {}", &fullpath);
+                                let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
+                            }
+                        }
                     }
                 }
                 Err(e) => println!("Could not write file {} {}", &file, e),
@@ -171,21 +237,17 @@ fn write_s3(file: &str, path: &str, log: &[u8]) {
                 Err(e) => println!("impossible to connect to syslog: {:?}", e),
                 Ok(writer) => {
                     let success = format!("wrote {}/{}", &req.bucket, &path);
-                    let failure = format!("unable to write {}/{}", &req.bucket, &path);
-                    if writer.send_3164(Severity::LOG_ALERT, &success).is_err() {
-                        let _ = writer.send_3164(Severity::LOG_ERR, &failure);
-                    }
+                    let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
                 }
             }
         });
     });
 }
 
-fn resend_logs() {
+fn resend_logs(config: ConfigFile) {
 
     // create iterator over the directory
-    for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
-        //let entry = entry.unwrap();
+    for entry in WalkDir::new(&config.cachedir).into_iter().filter_map(|e| e.ok()) {
 
         // filter out gzip'd file suffixes
         if entry.file_name()
@@ -193,23 +255,35 @@ fn resend_logs() {
                .map(|s| s.ends_with(".gz"))
                .unwrap() {
 
+            // get just the file name
             let filename = entry.file_name().to_str().unwrap();
 
-            // need to return only the parent and strip off the prefix ./
-            // this then is the path write_s3 is expecting
-            // there has to be a better way!
-            let path = Path::new(entry.path().parent().unwrap()).strip_prefix("./").unwrap();
+            // need to return only the parent and strip off the cachedir prefix
+            // this then is the path write_s3 is expecting as it is the path within s3
+            let path =
+                Path::new(entry.path().parent().unwrap()).strip_prefix(&config.cachedir).unwrap();
             let path = Path::new(path).to_str().unwrap();
 
-            let mut file = File::open(path).expect("Unable to read file");
+            // build out the complete path for reading
+            let filepath = format!("{}/{}/{}", &config.cachedir, &path, &filename);
+            // open the file for reading
+            let mut file = File::open(&filepath).expect("Unable to read file");
 
             // create a u8 vector
             let mut contents: Vec<u8> = Vec::new();
             // add our encoded log file to the vector
             let _ = file.read_to_end(&mut contents);
 
-            println!("Found unsent log {}/{}", &path, &filename);
-            write_s3(filename, path, &contents);
+            // Send some notifications to SYSLOG
+            match syslog::unix(Facility::LOG_SYSLOG) {
+                Err(e) => println!("impossible to connect to syslog: {:?}", e),
+                Ok(writer) => {
+                    let success = format!("Found unsent log {}/{}", &path, &filename);
+                    let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
+                }
+            }
+            // pass the unset logs to s3
+            write_s3(config.clone(), filename, path, &contents);
 
         }
     }

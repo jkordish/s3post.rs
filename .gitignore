@@ -23,3 +23,5 @@ Cargo.lock
 target/
 **/*.rs.bk
 *.gz
+
+s3post.json
