@@ -43,7 +43,6 @@ pub trait Config {
     fn new(&self) -> ConfigFile;
 }
 
-
 impl Config for ConfigFile {
     fn new(&self) -> ConfigFile {
         ConfigFile {
