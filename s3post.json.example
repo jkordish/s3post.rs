@@ -1,0 +1,9 @@
+{
+  "cachedir": "/tmp/s3post/",
+  "logfile": "/tmp/s3post.log",
+  "role_arn": "<role arn>",
+  "region": "<bucket region>",
+  "bucket": "<bucket>",
+  "prefix": "jkordish",
+  "ip": "0.0.0.0"
+}

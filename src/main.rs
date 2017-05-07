@@ -18,9 +18,9 @@ use std::fs::{File, remove_file, create_dir_all};
 use std::path::Path;
 use std::env;
 use std::str::FromStr;
-use rusoto::{DefaultCredentialsProvider, Region};
+use rusoto::{AutoRefreshingProvider, default_tls_client, DefaultCredentialsProvider, Region};
+use rusoto::sts::{StsClient, StsAssumeRoleSessionCredentialsProvider};
 use rusoto::s3::{S3Client, PutObjectRequest};
-use rusoto::default_tls_client;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use chrono::prelude::Local;
@@ -30,7 +30,7 @@ use syslog::{Facility, Severity};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ConfigFile {
+struct ConfigFile {
     cachedir: String,
     role_arn: String,
     region: String,
@@ -39,7 +39,7 @@ pub struct ConfigFile {
     ip: String,
 }
 
-pub trait Config {
+trait Config {
     fn new(&self) -> ConfigFile;
 }
 
@@ -142,7 +142,7 @@ fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: Co
                                &hostname);
 
             // append the cachedir so we write to the correct place
-            let fullpath = format!("{}/{}", config.cachedir, &path);
+            let fullpath = format!("{}/{}", &config.cachedir, &path);
 
             // create the directory structure
             let _ = create_dir_all(&fullpath);
@@ -161,7 +161,7 @@ fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: Co
             output.write_all(&log).unwrap();
 
             // call write_s3 to send the gzip'd file to s3
-            write_s3(config.clone(), &file, &path, &log);
+            write_s3(config.clone(), &file, &path, &log)
         });
     });
 }
@@ -172,7 +172,7 @@ fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8]) {
     scope(|scope| {
         scope.spawn(move || {
 
-            let path = format!("{}/{}", &path, &file);
+            let path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
             // set up our credentials provider for aws
             let provider = match DefaultCredentialsProvider::new() {
@@ -180,16 +180,26 @@ fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8]) {
                 Err(err) => panic!("Unable to load credentials. {}", err),
             };
 
-            // obtain our aws default region so we know where to look
-            let region = match env::var("AWS_DEFAULT_REGION") {
-                Ok(region) => region,
-                Err(err) => panic!("environment AWS_DEFAULT_REGION is not set. {}", err),
-            };
+
+            // initiate our sts client
+            let sts_client = StsClient::new(default_tls_client().unwrap(),
+                                            provider,
+                                            Region::from_str(&config.region).unwrap());
+            // generate a sts provider
+            let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(sts_client,
+                                                                            config.role_arn,
+                                                                            "s3post".to_owned(),
+                                                                            None,
+                                                                            None,
+                                                                            None,
+                                                                            None);
+            // allow our STS to auto-refresh
+            let auto_sts_provider = AutoRefreshingProvider::with_refcell(sts_provider);
 
             // create our s3 client initialization
             let s3 = S3Client::new(default_tls_client().unwrap(),
-                                   provider,
-                                   Region::from_str(&region).unwrap());
+                                   auto_sts_provider.unwrap(),
+                                   Region::from_str(&config.region).unwrap());
 
             // create a u8 vector
             let mut contents: Vec<u8> = Vec::new();
@@ -216,28 +226,19 @@ fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8]) {
                         }
                     }
                     // only remove the file if we are successful
-                    let fullpath = format!("{}/{}", &config.cachedir, &path);
-                    if remove_file(&fullpath).is_ok() {
+                    let localpath = format!("{}/{}", &config.cachedir, &path);
+                    if remove_file(&localpath).is_ok() {
                         // Send some notifications to SYSLOG
                         match syslog::unix(Facility::LOG_SYSLOG) {
                             Err(e) => println!("impossible to connect to syslog: {:?}", e),
                             Ok(writer) => {
-                                let success = format!("Removed file {}", &fullpath);
+                                let success = format!("Removed file {}", &localpath);
                                 let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
                             }
                         }
                     }
                 }
                 Err(e) => println!("Could not write file {} {}", &file, e),
-            }
-
-            // Send some notifications to SYSLOG
-            match syslog::unix(Facility::LOG_SYSLOG) {
-                Err(e) => println!("impossible to connect to syslog: {:?}", e),
-                Ok(writer) => {
-                    let success = format!("wrote {}/{}", &req.bucket, &path);
-                    let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
-                }
             }
         });
     });
@@ -282,7 +283,7 @@ fn resend_logs(config: ConfigFile) {
                 }
             }
             // pass the unset logs to s3
-            write_s3(config.clone(), filename, path, &contents);
+            write_s3(config.clone(), filename, path, &contents)
 
         }
     }
