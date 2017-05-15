@@ -11,6 +11,7 @@ extern crate crossbeam;
 extern crate chrono;
 extern crate syslog;
 extern crate walkdir;
+extern crate ifaces;
 
 use std::io;
 use std::io::prelude::*;
@@ -20,7 +21,7 @@ use std::env;
 use std::str::FromStr;
 use rusoto::{AutoRefreshingProvider, default_tls_client, DefaultCredentialsProvider, Region};
 use rusoto::sts::{StsClient, StsAssumeRoleSessionCredentialsProvider};
-use rusoto::s3::{S3Client, PutObjectRequest};
+use rusoto::s3::{S3Client, PutObjectRequest, Metadata};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use chrono::prelude::Local;
@@ -36,7 +37,6 @@ struct ConfigFile {
     region: String,
     bucket: String,
     prefix: String,
-    ip: String,
 }
 
 trait Config {
@@ -51,26 +51,31 @@ impl Config for ConfigFile {
             region: self.region.clone(),
             bucket: self.bucket.clone(),
             prefix: self.prefix.clone(),
-            ip: self.ip.clone(),
         }
     }
 }
 
 fn main() {
 
+    const MAX_LINES: usize = 50000;
+    const MAX_BYTES: usize = 10485760;
+    const MAX_TIMEOUT: i64 = 5; // in seconds
+
     let args: Vec<_> = env::args().collect();
     if args.len() < 1 {
-        println!("Please specify the path to the config");
+        println!("s3post <config.json> <interface>");
     }
 
-    let mut file_open = File::open(&args[1]).expect("Unable to read config file");
-    let mut buf = String::new();
-    let _ = file_open.read_to_string(&mut buf).expect("Unable to read contents of file");
-    let config: ConfigFile = serde_json::from_str(&buf).expect("Unable to process config file");
+    let file_open = File::open(&args[1]).expect("could not open file");
+    let config: ConfigFile = serde_json::from_reader(file_open).expect("config has invalid json");
 
-    const MAX_LINES: usize = 50000;
-    const MAX_BYTES: usize = 1000000; // 1M (this feels wrong though)
-    const MAX_TIMEOUT: i64 = 5; // in seconds
+    let mut address = String::new();
+    for iface in ifaces::Interface::get_all().unwrap() {
+        if iface.name == args[2] && iface.kind == ifaces::Kind::Ipv4 {
+            address = format!("{}", iface.addr.unwrap());
+            address = address.replace(":0", "");
+        };
+    }
 
     println!("MAX_LINES:\t{}\nMAX_BYTES:\t{}\nMAX_TIMEOUT:\t{}",
              MAX_LINES,
@@ -78,7 +83,7 @@ fn main() {
              MAX_TIMEOUT);
 
     // attempt to resend any logs that we might have not successfully sent
-    resend_logs(config.clone());
+    resend_logs(config.clone(), &address);
 
     let reader = io::stdin();
     let mut buffer = reader.lock();
@@ -95,7 +100,7 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
-                    compress(data.as_slice(), time, config.clone());
+                    compress(data.as_slice(), time, config.clone(), &address);
                     // clear our data vector
                     data.clear();
                     // reset our timer
@@ -105,7 +110,7 @@ fn main() {
                     // update the time
                     time = Local::now();
                     // attempt to resend any logs that we might have not successfully sent
-                    resend_logs(config.clone());
+                    resend_logs(config.clone(), &address);
                 }
             }
             Err(err) => panic!(err),
@@ -116,7 +121,10 @@ fn main() {
     }
 }
 
-fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: ConfigFile) -> () {
+fn compress(bytes: &[u8],
+            timestamp: chrono::DateTime<chrono::Local>,
+            config: ConfigFile,
+            address: &str) {
 
     // our compression routine will be sent to another thread
     scope(|scope| {
@@ -161,12 +169,12 @@ fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: Co
             output.write_all(&log).unwrap();
 
             // call write_s3 to send the gzip'd file to s3
-            write_s3(config.clone(), &file, &path, &log)
+            write_s3(config.clone(), &file, &path, &log, &*address)
         });
     });
 }
 
-fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8]) {
+fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8], address: &str) {
 
     // move to new thread
     scope(|scope| {
@@ -206,12 +214,25 @@ fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8]) {
             // add our encoded log file to the vector
             contents.extend(log);
 
+            let hostname = match env::var("HOSTNAME") {
+                Ok(hostname) => hostname,
+                Err(err) => panic!("Unable to get hostname. {}", err),
+            };
+
+
+            let mut metadata = Metadata::new();
+            metadata.insert("cbid".to_string(), hostname.to_string());
+            metadata.insert("ip".to_string(), address.to_string());
+            metadata.insert("uncompressed_bytes".to_string(), contents.len().to_string());
+            metadata.insert("lines".to_string(), contents.lines().count().to_string());
+
             // if we can read the contents to the buffer we will attempt to send the log to s3
             // need to build our request
             let req = PutObjectRequest {
                 bucket: config.bucket,
                 key: path.to_owned(),
                 body: Some(contents),
+                metadata: Some(metadata),
                 ..Default::default()
             };
 
@@ -244,7 +265,7 @@ fn write_s3(config: ConfigFile, file: &str, path: &str, log: &[u8]) {
     });
 }
 
-fn resend_logs(config: ConfigFile) {
+fn resend_logs(config: ConfigFile, address: &str) {
 
     // create iterator over the directory
     for entry in WalkDir::new(&config.cachedir).into_iter().filter_map(|e| e.ok()) {
@@ -283,7 +304,7 @@ fn resend_logs(config: ConfigFile) {
                 }
             }
             // pass the unset logs to s3
-            write_s3(config.clone(), filename, path, &contents)
+            write_s3(config.clone(), filename, path, &contents, &*address)
 
         }
     }
