@@ -30,29 +30,13 @@ use crossbeam::scope;
 use syslog::{Facility, Severity};
 use walkdir::WalkDir;
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
 struct ConfigFile {
     cachedir: String,
     role_arn: String,
     region: String,
     bucket: String,
     prefix: String,
-}
-
-trait Config {
-    fn new(&self) -> ConfigFile;
-}
-
-impl Config for ConfigFile {
-    fn new(&self) -> ConfigFile {
-        ConfigFile {
-            cachedir: self.cachedir.clone(),
-            role_arn: self.role_arn.clone(),
-            region: self.region.clone(),
-            bucket: self.bucket.clone(),
-            prefix: self.prefix.clone(),
-        }
-    }
 }
 
 const MAX_LINES: usize = 50000;
@@ -76,7 +60,7 @@ fn main() {
              MAX_TIMEOUT);
 
     // attempt to resend any logs that we might have not successfully sent
-    resend_logs(&config.clone());
+    resend_logs(&config);
 
     let reader = io::stdin();
     let mut buffer = reader.lock();
@@ -93,7 +77,7 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
-                    compress(data.as_slice(), time, &config.clone());
+                    compress(data.as_slice(), time, &config);
                     // clear our data vector
                     data.clear();
                     // reset our timer
@@ -103,7 +87,7 @@ fn main() {
                     // update the time
                     time = Local::now();
                     // attempt to resend any logs that we might have not successfully sent
-                    resend_logs(&config.clone());
+                    resend_logs(&config);
                 }
             }
             Err(err) => panic!(err),
@@ -160,7 +144,7 @@ fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: &C
             output.write_all(&log).unwrap();
 
             // call write_s3 to send the gzip'd file to s3
-            write_s3(&config.clone(), &file, &path, &log)
+            write_s3(&config, &file, &path, &log)
         });
     });
 }
@@ -207,7 +191,7 @@ fn write_s3(config: &ConfigFile, file: &str, path: &str, log: &[u8]) {
             // generate a sts provider
             let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(sts_client,
                                                                             config.role_arn
-                                                                                .clone(),
+                                                                                .to_owned(),
                                                                             "s3post".to_owned(),
                                                                             None,
                                                                             None,
@@ -237,7 +221,7 @@ fn write_s3(config: &ConfigFile, file: &str, path: &str, log: &[u8]) {
             // if we can read the contents to the buffer we will attempt to send the log to s3
             // need to build our request
             let req = PutObjectRequest {
-                bucket: config.bucket.clone(),
+                bucket: config.bucket.to_owned(),
                 key: path.to_owned(),
                 body: Some(contents),
                 metadata: Some(metadata),
@@ -313,7 +297,7 @@ fn resend_logs(config: &ConfigFile) {
                 }
             }
             // pass the unset logs to s3
-            write_s3(&config.clone(), filename, path, &contents)
+            write_s3(&config, filename, path, &contents)
 
         }
     }
