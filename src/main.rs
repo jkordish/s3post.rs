@@ -30,6 +30,7 @@ use crossbeam::scope;
 use syslog::{Facility, Severity};
 use walkdir::WalkDir;
 
+// struct for our config file
 #[derive(Serialize, Deserialize)]
 struct ConfigFile {
     cachedir: String,
@@ -39,6 +40,13 @@ struct ConfigFile {
     prefix: String,
 }
 
+// struct for our system information
+struct SystemInfo {
+    hostname: String,
+    ipaddr: String,
+}
+
+// few consts. might make these configurable later
 const MAX_LINES: usize = 50000;
 const MAX_BYTES: usize = 10485760;
 const MAX_TIMEOUT: i64 = 10;
@@ -51,21 +59,52 @@ fn main() {
         println!("s3post <config.json>");
     }
 
+    // open our config file
     let file_open = File::open(&args[1]).expect("could not open file");
+    // attempt to deserialize the config to our struct
     let config: ConfigFile = serde_json::from_reader(file_open).expect("config has invalid json");
 
-    println!("MAX_LINES:\t{}\nMAX_BYTES:\t{}\nMAX_TIMEOUT:\t{}",
+
+    // need the ipaddr of our interface. will be part of the metadata
+    let mut address = String::new();
+    for iface in ifaces::Interface::get_all().unwrap() {
+        if iface.name == INTERFACE && iface.kind == ifaces::Kind::Ipv4 {
+            address = format!("{}", iface.addr.unwrap());
+            address = address.replace(":0", "");
+        } else {
+            panic!("Unable to find usable interface. Aborting!");
+        }
+    }
+
+    // use our environment variable of hostname. will be essentially the CBID
+    let hostname = match env::var("HOSTNAME") {
+        Ok(hostname) => hostname,
+        Err(err) => panic!("Unable to get hostname. {}", err),
+    };
+
+    // store hostname and ip address in our struct
+    let system: SystemInfo = SystemInfo {
+        hostname: hostname,
+        ipaddr: address,
+    };
+
+    println!("MAX_LINES:\t{}\tMAX_BYTES:\t{}\tMAX_TIMEOUT:\t{}",
              MAX_LINES,
              MAX_BYTES,
              MAX_TIMEOUT);
 
     // attempt to resend any logs that we might have not successfully sent
-    resend_logs(&config);
+    resend_logs(&config, &system);
 
+    // create a reader from stdin
     let reader = io::stdin();
+    // create a buffer from the stdin lock
     let mut buffer = reader.lock();
+    // initialize an empty vector
     let mut data = vec![0];
+    // grab the current time
     let mut time = Local::now();
+    // create initial timeout
     let mut timeout = time + Duration::seconds(MAX_TIMEOUT);
 
     loop {
@@ -77,7 +116,7 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
-                    compress(data.as_slice(), time, &config);
+                    compress(data.as_slice(), time, &config, &system);
                     // clear our data vector
                     data.clear();
                     // reset our timer
@@ -87,28 +126,24 @@ fn main() {
                     // update the time
                     time = Local::now();
                     // attempt to resend any logs that we might have not successfully sent
-                    resend_logs(&config);
+                    resend_logs(&config, &system);
                 }
             }
             Err(err) => panic!(err),
         }
-
         // consume the data from the buffer so we don't reprocess it
         buffer.consume(data.len());
     }
 }
 
-fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: &ConfigFile) {
+fn compress(bytes: &[u8],
+            timestamp: chrono::DateTime<chrono::Local>,
+            config: &ConfigFile,
+            system: &SystemInfo) {
 
     // our compression routine will be sent to another thread
     scope(|scope| {
         scope.spawn(move || {
-
-            // use our environment variable of hostname. will be essentially the CBID
-            let hostname = match env::var("HOSTNAME") {
-                Ok(hostname) => hostname,
-                Err(err) => panic!("Unable to get hostname. {}", err),
-            };
 
             // generate our local path
             let path = format!("{}/{}/{}/{}/{}/",
@@ -122,7 +157,7 @@ fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: &C
             let file = format!("{}.{}-{}.raw.gz",
                                timestamp.second(),
                                timestamp.timestamp_subsec_millis(),
-                               &hostname);
+                               &system.hostname);
 
             // append the cachedir so we write to the correct place
             let fullpath = format!("{}/{}", &config.cachedir, &path);
@@ -144,36 +179,16 @@ fn compress(bytes: &[u8], timestamp: chrono::DateTime<chrono::Local>, config: &C
             output.write_all(&log).unwrap();
 
             // call write_s3 to send the gzip'd file to s3
-            write_s3(&config, &file, &path, &log)
+            write_s3(&config, &system, &file, &path, &log)
         });
     });
 }
 
-fn write_s3(config: &ConfigFile, file: &str, path: &str, log: &[u8]) {
+fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, log: &[u8]) {
 
     // move to new thread
     scope(|scope| {
         scope.spawn(move || {
-
-            // need the ipaddr of our interface. will be part of the metadata
-            let mut address = String::new();
-            for iface in ifaces::Interface::get_all().unwrap() {
-                if iface.name == INTERFACE && iface.kind == ifaces::Kind::Ipv4 {
-                    address = format!("{}", iface.addr.unwrap());
-                    address = address.replace(":0", "");
-                } else if iface.name == "en0" && iface.kind == ifaces::Kind::Ipv4 {
-                    address = format!("{}", iface.addr.unwrap());
-                    address = address.replace(":0", "");
-                } else {
-                    panic!("Unable to find usable interface. Aborting!");
-                }
-            }
-
-            // use our environment variable of hostname. will be essentially the CBID
-            let hostname = match env::var("HOSTNAME") {
-                Ok(hostname) => hostname,
-                Err(err) => panic!("Unable to get hostname. {}", err),
-            };
 
             let path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
@@ -182,7 +197,6 @@ fn write_s3(config: &ConfigFile, file: &str, path: &str, log: &[u8]) {
                 Ok(provider) => provider,
                 Err(err) => panic!("Unable to load credentials. {}", err),
             };
-
 
             // initiate our sts client
             let sts_client = StsClient::new(default_tls_client().unwrap(),
@@ -210,11 +224,10 @@ fn write_s3(config: &ConfigFile, file: &str, path: &str, log: &[u8]) {
             // add our encoded log file to the vector
             contents.extend(log);
 
-
             // generate our metadata which we add to the s3 upload
             let mut metadata = Metadata::new();
-            metadata.insert("cbid".to_string(), hostname.to_string());
-            metadata.insert("ip".to_string(), address.to_string());
+            metadata.insert("cbid".to_string(), system.hostname.to_string());
+            metadata.insert("ip".to_string(), system.ipaddr.to_string());
             metadata.insert("uncompressed_bytes".to_string(), contents.len().to_string());
             metadata.insert("lines".to_string(), contents.lines().count().to_string());
 
@@ -258,7 +271,7 @@ fn write_s3(config: &ConfigFile, file: &str, path: &str, log: &[u8]) {
     });
 }
 
-fn resend_logs(config: &ConfigFile) {
+fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
 
     // create iterator over the directory
     for entry in WalkDir::new(&config.cachedir).into_iter().filter_map(|e| e.ok()) {
@@ -297,7 +310,7 @@ fn resend_logs(config: &ConfigFile) {
                 }
             }
             // pass the unset logs to s3
-            write_s3(&config, filename, path, &contents)
+            write_s3(&config, &system, filename, path, &contents)
 
         }
     }
