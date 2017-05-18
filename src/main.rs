@@ -71,8 +71,6 @@ fn main() {
         if iface.name == INTERFACE && iface.kind == ifaces::Kind::Ipv4 {
             address = format!("{}", iface.addr.unwrap());
             address = address.replace(":0", "");
-        } else {
-            panic!("Unable to find usable interface. Aborting!");
         }
     }
 
@@ -179,7 +177,7 @@ fn compress(bytes: &[u8],
             output.write_all(&log).unwrap();
 
             // call write_s3 to send the gzip'd file to s3
-            write_s3(&config, &system, &file, &path, &log)
+            write_s3(&*config, &*system, &file, &path, &log)
         });
     });
 }
@@ -310,7 +308,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
                 }
             }
             // pass the unset logs to s3
-            write_s3(&config, &system, filename, path, &contents)
+            write_s3(&*config, &*system, filename, path, &contents)
 
         }
     }
