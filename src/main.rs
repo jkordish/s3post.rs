@@ -49,8 +49,7 @@ struct SystemInfo {
 // few consts. might make these configurable later
 const MAX_LINES: usize = 50000;
 const MAX_BYTES: usize = 10485760;
-const MAX_TIMEOUT: i64 = 10;
-const INTERFACE: &str = "eth0";
+const MAX_TIMEOUT: i64 = 30;
 
 fn main() {
 
@@ -64,21 +63,25 @@ fn main() {
     // attempt to deserialize the config to our struct
     let config: ConfigFile = serde_json::from_reader(file_open).expect("config has invalid json");
 
+    // determine our hostname.
+    let mut hostname = String::new();
+    if let Ok(mut file) = File::open("/etc/hostname") {
+        let mut buffer = String::new();
+        let _ = file.read_to_string(&mut buffer).unwrap().to_string();
+        hostname = buffer.trim().to_owned();
+    } else {
+        hostname = "localhost".to_string();
+    }
 
     // need the ipaddr of our interface. will be part of the metadata
     let mut address = String::new();
     for iface in ifaces::Interface::get_all().unwrap() {
-        if iface.name == INTERFACE && iface.kind == ifaces::Kind::Ipv4 {
+        if iface.kind == ifaces::Kind::Ipv4 {
             address = format!("{}", iface.addr.unwrap());
             address = address.replace(":0", "");
         }
+        continue;
     }
-
-    // use our environment variable of hostname. will be essentially the CBID
-    let hostname = match env::var("HOSTNAME") {
-        Ok(hostname) => hostname,
-        Err(err) => panic!("Unable to get hostname. {}", err),
-    };
 
     // store hostname and ip address in our struct
     let system: SystemInfo = SystemInfo {
@@ -144,7 +147,7 @@ fn compress(bytes: &[u8],
         scope.spawn(move || {
 
             // generate our local path
-            let path = format!("{}/{}/{}/{}/{}/",
+            let path = format!("{}/{}/{}/{}/{}",
                                timestamp.year(),
                                timestamp.month(),
                                timestamp.day(),
@@ -164,7 +167,7 @@ fn compress(bytes: &[u8],
             let _ = create_dir_all(&fullpath);
 
             // create the file in the full path
-            let mut output = File::create(format!("{}{}", &fullpath, &file)).unwrap();
+            let mut output = File::create(format!("{}/{}", &fullpath, &file)).unwrap();
 
             // create a gzip encoder
             let mut encoder = GzEncoder::new(Vec::new(), Compression::Default);
@@ -188,7 +191,7 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
     scope(|scope| {
         scope.spawn(move || {
 
-            let path = format!("{}/{}/{}", &config.prefix, &path, &file);
+            let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
             // set up our credentials provider for aws
             let provider = match DefaultCredentialsProvider::new() {
@@ -233,7 +236,7 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
             // need to build our request
             let req = PutObjectRequest {
                 bucket: config.bucket.to_owned(),
-                key: path.to_owned(),
+                key: s3path.to_owned(),
                 body: Some(contents),
                 metadata: Some(metadata),
                 ..Default::default()
@@ -246,21 +249,23 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
                     match syslog::unix(Facility::LOG_SYSLOG) {
                         Err(e) => println!("impossible to connect to syslog: {:?}", e),
                         Ok(writer) => {
-                            let success = format!("Successfully wrote {}/{}", &req.bucket, &path);
-                            let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
+                            let success = format!("Successfully wrote {}/{}", &req.bucket, &s3path);
+                            let _ = writer.send_3164(Severity::LOG_DEBUG, &success).is_ok();
                         }
                     }
                     // only remove the file if we are successful
-                    let localpath = format!("{}/{}", &config.cachedir, &path);
+                    let localpath = format!("{}/{}/{}", &config.cachedir, &path, &file);
                     if remove_file(&localpath).is_ok() {
                         // Send some notifications to SYSLOG
                         match syslog::unix(Facility::LOG_SYSLOG) {
                             Err(e) => println!("impossible to connect to syslog: {:?}", e),
                             Ok(writer) => {
                                 let success = format!("Removed file {}", &localpath);
-                                let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
+                                let _ = writer.send_3164(Severity::LOG_DEBUG, &success).is_ok();
                             }
                         }
+                    } else {
+                        println!("Unable to remove file: {}", &localpath);
                     }
                 }
                 Err(e) => println!("Could not write file {} {}", &file, e),
@@ -304,7 +309,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
                 Err(e) => println!("impossible to connect to syslog: {:?}", e),
                 Ok(writer) => {
                     let success = format!("Found unsent log {}/{}", &path, &filename);
-                    let _ = writer.send_3164(Severity::LOG_ALERT, &success).is_ok();
+                    let _ = writer.send_3164(Severity::LOG_DEBUG, &success).is_ok();
                 }
             }
             // pass the unset logs to s3
