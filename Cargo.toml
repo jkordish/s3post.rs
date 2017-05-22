@@ -1,6 +1,6 @@
 [package]
 name = "s3post.rs"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Joseph Kordish <joe@unicornclouds.com>"]
 
 description = "Post gzip compressed logs to S3"
@@ -19,7 +19,10 @@ keywords = [
 name = "s3post"
 
 [dependencies]
-syslog = "^3"
+slog = "2"
+slog-stdlog = "2"
+slog-term = "2"
+slog-async = "2"
 flate2 = { version = "^0.2", features = ["miniz-sys"], default-features = false  }
 crossbeam = "^0.2"
 chrono = "^0.3"
