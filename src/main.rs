@@ -2,6 +2,11 @@
 #![feature(plugin)]
 
 #[macro_use]
+extern crate slog;
+extern crate slog_term;
+extern crate slog_async;
+
+#[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
@@ -9,13 +14,13 @@ extern crate flate2;
 extern crate rusoto;
 extern crate crossbeam;
 extern crate chrono;
-extern crate syslog;
 extern crate walkdir;
 extern crate ifaces;
 
 use std::io;
 use std::io::prelude::*;
-use std::fs::{File, remove_file, create_dir_all};
+use std::fs::{File, remove_file, create_dir_all, OpenOptions};
+use slog::Drain;
 use std::path::Path;
 use std::env;
 use std::str::FromStr;
@@ -27,17 +32,17 @@ use flate2::write::GzEncoder;
 use chrono::prelude::Local;
 use chrono::{Datelike, Timelike, Duration};
 use crossbeam::scope;
-use syslog::{Facility, Severity};
 use walkdir::WalkDir;
 
 // struct for our config file
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct ConfigFile {
     cachedir: String,
     role_arn: String,
     region: String,
     bucket: String,
     prefix: String,
+    logfile: Option<String>,
 }
 
 // struct for our system information
@@ -62,6 +67,12 @@ fn main() {
     let file_open = File::open(&args[1]).expect("could not open file");
     // attempt to deserialize the config to our struct
     let config: ConfigFile = serde_json::from_reader(file_open).expect("config has invalid json");
+
+    let message: String = "S3POST Starting up!".to_owned();
+    logging(&config, &message);
+
+    // create initial log directory
+    let _ = create_dir_all(&config.cachedir);
 
     // determine our hostname.
     let mut hostname = String::new();
@@ -89,10 +100,15 @@ fn main() {
         ipaddr: address,
     };
 
-    println!("MAX_LINES:\t{}\tMAX_BYTES:\t{}\tMAX_TIMEOUT:\t{}",
-             MAX_LINES,
-             MAX_BYTES,
-             MAX_TIMEOUT);
+    //
+    let message = format!("MAX_LINES: {}  MAX_BYTES: {}  MAX_TIMEOUT:{}",
+                          MAX_LINES,
+                          MAX_BYTES,
+                          MAX_TIMEOUT);
+    logging(&config, &message);
+
+    let message = format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr);
+    logging(&config, &message);
 
     // attempt to resend any logs that we might have not successfully sent
     resend_logs(&config, &system);
@@ -180,7 +196,7 @@ fn compress(bytes: &[u8],
             output.write_all(&log).unwrap();
 
             // call write_s3 to send the gzip'd file to s3
-            write_s3(&*config, &*system, &file, &path, &log)
+            write_s3(&config, &system, &file, &path, &log)
         });
     });
 }
@@ -245,30 +261,26 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
             match s3.put_object(&req) {
                 // we were successful!
                 Ok(_) => {
-                    // Send some notifications to SYSLOG
-                    match syslog::unix(Facility::LOG_SYSLOG) {
-                        Err(e) => println!("impossible to connect to syslog: {:?}", e),
-                        Ok(writer) => {
-                            let success = format!("Successfully wrote {}/{}", &req.bucket, &s3path);
-                            let _ = writer.send_3164(Severity::LOG_DEBUG, &success).is_ok();
-                        }
-                    }
+                    // send some notifications
+                    let message = format!("Successfully wrote {}/{}", &req.bucket, &s3path);
+                    logging(&config, &message);
                     // only remove the file if we are successful
                     let localpath = format!("{}/{}/{}", &config.cachedir, &path, &file);
                     if remove_file(&localpath).is_ok() {
-                        // Send some notifications to SYSLOG
-                        match syslog::unix(Facility::LOG_SYSLOG) {
-                            Err(e) => println!("impossible to connect to syslog: {:?}", e),
-                            Ok(writer) => {
-                                let success = format!("Removed file {}", &localpath);
-                                let _ = writer.send_3164(Severity::LOG_DEBUG, &success).is_ok();
-                            }
-                        }
+                        // send some notifications
+                        let message = format!("Removed file {}", &localpath);
+                        logging(&config, &message);
                     } else {
-                        println!("Unable to remove file: {}", &localpath);
+                        // send some notifications
+                        let message = format!("Unable to remove file: {}", &localpath);
+                        logging(&config, &message);
                     }
                 }
-                Err(e) => println!("Could not write file {} {}", &file, e),
+                Err(e) => {
+                    // send some notifications
+                    let message = format!("Could not write {} to s3! {}", &file, e);
+                    logging(&config, &message);
+                }
             }
         });
     });
@@ -304,17 +316,43 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             // add our encoded log file to the vector
             let _ = file.read_to_end(&mut contents);
 
-            // Send some notifications to SYSLOG
-            match syslog::unix(Facility::LOG_SYSLOG) {
-                Err(e) => println!("impossible to connect to syslog: {:?}", e),
-                Ok(writer) => {
-                    let success = format!("Found unsent log {}/{}", &path, &filename);
-                    let _ = writer.send_3164(Severity::LOG_DEBUG, &success).is_ok();
-                }
-            }
+            let message = format!("Found unsent log {}/{}", &path, &filename);
+            logging(&config, &message);
             // pass the unset logs to s3
-            write_s3(&*config, &*system, filename, path, &contents)
-
+            write_s3(&config, &system, filename, path, &contents)
         }
+    }
+}
+
+fn logging(config: &ConfigFile, msg: &str) {
+
+    if config.logfile.is_some() {
+
+        let file = format!("{}/{}",
+                           &config.cachedir,
+                           &config.logfile.to_owned().unwrap());
+
+        // have to convert file to a Path
+        let path = Path::new(&file).to_str().unwrap();
+
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+
+        let decorator = slog_term::PlainDecorator::new(file);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+
+        let logger = slog::Logger::root(drain, o!());
+        info!(logger, "S3POST"; "message:" => &msg);
+    } else {
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+
+        let logger = slog::Logger::root(drain, o!());
+        info!(logger, "S3POST"; "message:" => &msg);
     }
 }
