@@ -42,13 +42,13 @@ struct ConfigFile {
     region: String,
     bucket: String,
     prefix: String,
-    logfile: Option<String>,
+    logfile: Option<String>
 }
 
 // struct for our system information
 struct SystemInfo {
     hostname: String,
-    ipaddr: String,
+    ipaddr: String
 }
 
 // few consts. might make these configurable later
@@ -97,7 +97,7 @@ fn main() {
     // store hostname and ip address in our struct
     let system: SystemInfo = SystemInfo {
         hostname: hostname,
-        ipaddr: address,
+        ipaddr: address
     };
 
     //
@@ -220,14 +220,14 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
                                             provider,
                                             Region::from_str(&config.region).unwrap());
             // generate a sts provider
-            let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(sts_client,
-                                                                            config.role_arn
-                                                                                .to_owned(),
-                                                                            "s3post".to_owned(),
-                                                                            None,
-                                                                            None,
-                                                                            None,
-                                                                            None);
+            let sts_provider =
+                StsAssumeRoleSessionCredentialsProvider::new(sts_client,
+                                                             config.role_arn.to_owned(),
+                                                             "s3post".to_owned(),
+                                                             None,
+                                                             None,
+                                                             None,
+                                                             None);
             // allow our STS to auto-refresh
             let auto_sts_provider = AutoRefreshingProvider::with_refcell(sts_provider);
 
@@ -293,9 +293,9 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
 
         // filter out gzip'd file suffixes
         if entry.file_name()
-               .to_str()
-               .map(|s| s.ends_with(".gz"))
-               .unwrap() {
+                .to_str()
+                .map(|s| s.ends_with(".gz"))
+                .unwrap() {
 
             // get just the file name
             let filename = entry.file_name().to_str().unwrap();
@@ -328,9 +328,7 @@ fn logging(config: &ConfigFile, msg: &str) {
 
     if config.logfile.is_some() {
 
-        let file = format!("{}/{}",
-                           &config.cachedir,
-                           &config.logfile.to_owned().unwrap());
+        let file = format!("{}/{}", &config.cachedir, &config.logfile.to_owned().unwrap());
 
         // have to convert file to a Path
         let path = Path::new(&file).to_str().unwrap();

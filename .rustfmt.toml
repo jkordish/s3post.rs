@@ -1,0 +1,15 @@
+fn_call_width = 80
+array_width = 80
+trailing_comma = "Never"
+chain_indent = "Visual"
+closure_block_indent_threshold = 1
+comment_width = 80
+condense_wildcard_suffices = true
+fn_args_paren_newline = false
+normalize_comments = true
+use_try_shorthand = true
+
+# Newlines are not wrapped correctly resulting in lines of varying length
+wrap_comments = false
+write_mode = "Overwrite"
+
