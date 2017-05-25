@@ -5,13 +5,14 @@
 extern crate slog;
 extern crate slog_term;
 extern crate slog_async;
-
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 extern crate flate2;
-extern crate rusoto;
+extern crate rusoto_core;
+extern crate rusoto_s3;
+extern crate rusoto_sts;
 extern crate crossbeam;
 extern crate chrono;
 extern crate walkdir;
@@ -24,9 +25,9 @@ use slog::Drain;
 use std::path::Path;
 use std::env;
 use std::str::FromStr;
-use rusoto::{AutoRefreshingProvider, default_tls_client, DefaultCredentialsProvider, Region};
-use rusoto::sts::{StsClient, StsAssumeRoleSessionCredentialsProvider};
-use rusoto::s3::{S3Client, PutObjectRequest, Metadata};
+use rusoto_core::{AutoRefreshingProvider, default_tls_client, DefaultCredentialsProvider, Region};
+use rusoto_sts::{StsClient, StsAssumeRoleSessionCredentialsProvider};
+use rusoto_s3::{S3Client, PutObjectRequest, Metadata, S3};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use chrono::prelude::Local;
@@ -35,7 +36,7 @@ use crossbeam::scope;
 use walkdir::WalkDir;
 
 // struct for our config file
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct ConfigFile {
     cachedir: String,
     role_arn: String,
