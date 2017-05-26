@@ -17,6 +17,8 @@ extern crate crossbeam;
 extern crate chrono;
 extern crate walkdir;
 extern crate ifaces;
+extern crate statsd;
+extern crate elapsed;
 
 use std::io;
 use std::io::prelude::*;
@@ -34,6 +36,7 @@ use chrono::prelude::Local;
 use chrono::{Datelike, Timelike, Duration};
 use crossbeam::scope;
 use walkdir::WalkDir;
+use elapsed::measure_time;
 
 // struct for our config file
 #[derive(Serialize, Deserialize)]
@@ -134,6 +137,7 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
+                    metrics("counter", "log.collect", 1.0);
                     compress(data.as_slice(), time, &config, &system);
                     // clear our data vector
                     data.clear();
@@ -190,14 +194,16 @@ fn compress(bytes: &[u8],
             let mut encoder = GzEncoder::new(Vec::new(), Compression::Default);
 
             // encode the retrieved bytes
-            encoder.write_all(bytes).unwrap();
+            let (elapsed, _) = measure_time(|| encoder.write_all(bytes).unwrap());
             let log = encoder.finish().unwrap();
 
             // write out the encoded data to our file
             output.write_all(&log).unwrap();
 
             // call write_s3 to send the gzip'd file to s3
-            write_s3(&config, &system, &file, &path, &log)
+            metrics("timer", "log.compress.time", elapsed.duration().as_secs() as f64);
+            metrics("counter", "log.compress.count", 1.0);
+            write_s3(&config, &system, &file, &path, &log);
         });
     });
 }
@@ -262,6 +268,8 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
             match s3.put_object(&req) {
                 // we were successful!
                 Ok(_) => {
+                    // write metric to statsd
+                    metrics("counter", "s3.write", 1.0);
                     // send some notifications
                     let message = format!("Successfully wrote {}/{}", &req.bucket, &s3path);
                     logging(&config, &message);
@@ -281,6 +289,7 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
                     // send some notifications
                     let message = format!("Could not write {} to s3! {}", &file, e);
                     logging(&config, &message);
+                    metrics("counter", "s3.failure", 1.0);
                 }
             }
         });
@@ -320,7 +329,8 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             let message = format!("Found unsent log {}/{}", &path, &filename);
             logging(&config, &message);
             // pass the unset logs to s3
-            write_s3(&config, &system, filename, path, &contents)
+            metrics("counter", "s3.resend", 1.0);
+            write_s3(&config, &system, filename, path, &contents);
         }
     }
 }
@@ -353,5 +363,17 @@ fn logging(config: &ConfigFile, msg: &str) {
 
         let logger = slog::Logger::root(drain, o!());
         info!(logger, "S3POST"; "message:" => &msg);
+    }
+}
+
+fn metrics(stat: &str, metric: &str, value: f64) {
+    let mut client = statsd::Client::new("127.0.0.1:8125", "s3post").unwrap();
+    match stat {
+        "counter" => client.incr(metric),
+        "guage" => client.gauge(metric, value),
+        "timer" => client.timer(metric, value),
+        _ => {
+            println!("{:?} {:?} {:?}", &stat, &metric, &value);
+        }
     }
 }
