@@ -17,9 +17,11 @@ extern crate crossbeam;
 extern crate chrono;
 extern crate walkdir;
 extern crate ifaces;
-extern crate statsd;
+extern crate cadence;
 extern crate elapsed;
 
+use std::sync::Arc;
+use std::thread;
 use std::io;
 use std::io::prelude::*;
 use std::fs::{File, remove_file, create_dir_all, OpenOptions};
@@ -37,6 +39,9 @@ use chrono::{Datelike, Timelike, Duration};
 use crossbeam::scope;
 use walkdir::WalkDir;
 use elapsed::measure_time;
+use std::net::UdpSocket;
+use cadence::prelude::*;
+use cadence::{StatsdClient, BufferedUdpMetricSink, DEFAULT_PORT};
 
 // struct for our config file
 #[derive(Serialize, Deserialize)]
@@ -54,6 +59,43 @@ struct SystemInfo {
     hostname: String,
     ipaddr: String
 }
+
+
+pub struct MetricRequestHandler {
+    metrics: Arc<MetricClient + Send + Sync>
+}
+
+impl MetricRequestHandler {
+    fn new() -> MetricRequestHandler {
+        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let host = ("localhost", DEFAULT_PORT);
+        let sink = BufferedUdpMetricSink::from(host, socket).unwrap();
+        MetricRequestHandler { metrics: Arc::new(StatsdClient::from_sink("s3post", sink)) }
+    }
+
+    fn metric_time(&self, metric: String, time: std::time::Duration) -> Result<(), String> {
+
+        let metrics_ref = self.metrics.clone();
+        let metric = metric.clone();
+        let time = time.clone();
+
+        let t = thread::spawn(move || { let _ = metrics_ref.time_duration(metric.as_ref(), time); });
+
+        t.join().unwrap();
+        Ok(())
+    }
+    fn metric_count(&self, metric: String) -> Result<(), String> {
+
+        let metrics_ref = self.metrics.clone();
+        let metric = metric.clone();
+
+        let t = thread::spawn(move || { let _ = metrics_ref.incr(metric.as_ref()); });
+
+        t.join().unwrap();
+        Ok(())
+    }
+}
+
 
 // few consts. might make these configurable later
 const MAX_LINES: usize = 50000;
@@ -128,6 +170,9 @@ fn main() {
     // create initial timeout
     let mut timeout = time + Duration::seconds(MAX_TIMEOUT);
 
+    // set new metric thread handler
+    let metric = MetricRequestHandler::new();
+
     loop {
         match buffer.fill_buf() {
             Ok(bytes) => {
@@ -137,7 +182,7 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
                    timeout <= time && !data.is_empty() {
                     // send the data to the compress function
-                    metrics("counter", "log.collect", 1.0);
+                    metric.metric_count("log.collect".to_string()).unwrap();
                     compress(data.as_slice(), time, &config, &system);
                     // clear our data vector
                     data.clear();
@@ -162,6 +207,8 @@ fn compress(bytes: &[u8],
             timestamp: chrono::DateTime<chrono::Local>,
             config: &ConfigFile,
             system: &SystemInfo) {
+
+    let metric = MetricRequestHandler::new();
 
     // our compression routine will be sent to another thread
     scope(|scope| {
@@ -200,15 +247,18 @@ fn compress(bytes: &[u8],
             // write out the encoded data to our file
             output.write_all(&log).unwrap();
 
+            // dump metrics to statsd
+            metric.metric_time("log.compress.time".to_string(), elapsed.duration()).unwrap();
+            metric.metric_count("log.compress.count".to_string()).unwrap();
+
             // call write_s3 to send the gzip'd file to s3
-            metrics("timer", "log.compress.time", elapsed.duration().as_secs() as f64);
-            metrics("counter", "log.compress.count", 1.0);
             write_s3(&config, &system, &file, &path, &log);
         });
     });
 }
 
 fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, log: &[u8]) {
+    let metric = MetricRequestHandler::new();
 
     // move to new thread
     scope(|scope| {
@@ -269,7 +319,7 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
                 // we were successful!
                 Ok(_) => {
                     // write metric to statsd
-                    metrics("counter", "s3.write", 1.0);
+                    metric.metric_count("s3.write".to_string()).unwrap();
                     // send some notifications
                     let message = format!("Successfully wrote {}/{}", &req.bucket, &s3path);
                     logging(&config, &message);
@@ -289,7 +339,7 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
                     // send some notifications
                     let message = format!("Could not write {} to s3! {}", &file, e);
                     logging(&config, &message);
-                    metrics("counter", "s3.failure", 1.0);
+                    metric.metric_count("s3.failure".to_string()).unwrap();
                 }
             }
         });
@@ -297,6 +347,8 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
 }
 
 fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
+
+    let metric = MetricRequestHandler::new();
 
     // create iterator over the directory
     for entry in WalkDir::new(&config.cachedir).into_iter().filter_map(|e| e.ok()) {
@@ -329,7 +381,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             let message = format!("Found unsent log {}/{}", &path, &filename);
             logging(&config, &message);
             // pass the unset logs to s3
-            metrics("counter", "s3.resend", 1.0);
+            metric.metric_count("s3.resend".to_string()).unwrap();
             write_s3(&config, &system, filename, path, &contents);
         }
     }
@@ -337,6 +389,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
 
 fn logging(config: &ConfigFile, msg: &str) {
 
+    // log to logfile otherwise to stdout
     if config.logfile.is_some() {
 
         let file = format!("{}/{}", &config.cachedir, &config.logfile.to_owned().unwrap());
@@ -363,17 +416,5 @@ fn logging(config: &ConfigFile, msg: &str) {
 
         let logger = slog::Logger::root(drain, o!());
         info!(logger, "S3POST"; "message:" => &msg);
-    }
-}
-
-fn metrics(stat: &str, metric: &str, value: f64) {
-    let mut client = statsd::Client::new("127.0.0.1:8125", "s3post").unwrap();
-    match stat {
-        "counter" => client.incr(metric),
-        "guage" => client.gauge(metric, value),
-        "timer" => client.timer(metric, value),
-        _ => {
-            println!("{:?} {:?} {:?}", &stat, &metric, &value);
-        }
     }
 }

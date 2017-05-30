@@ -1,6 +1,6 @@
 [package]
 name = "s3post.rs"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Joseph Kordish <joe@unicornclouds.com>"]
 
 description = "Post gzip compressed logs to S3"
@@ -34,7 +34,7 @@ serde_derive = "^1"
 rusoto_core = "0.25.0"
 rusoto_s3 = "0.25.0"
 rusoto_sts =  "0.25.0"
-statsd = "0.8.0"
+cadence = "0.12.0"
 elapsed = "0.1"
 clippy = {version="*", optional = true}
 
