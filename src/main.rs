@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::thread;
 use std::io;
 use std::io::prelude::*;
-use std::fs::{File, remove_file, create_dir_all, OpenOptions};
+use std::fs::{File, remove_file, remove_dir, create_dir_all, OpenOptions};
 use slog::Drain;
 use std::path::Path;
 use std::env;
@@ -77,7 +77,6 @@ impl MetricRequestHandler {
 
         let metrics_ref = self.metrics.clone();
         let metric = metric.clone();
-        let time = time.clone();
 
         let t = thread::spawn(move || { let _ = metrics_ref.time_duration(metric.as_ref(), time); });
 
@@ -349,6 +348,14 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
 fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
 
     let metric = MetricRequestHandler::new();
+
+    for entry in WalkDir::new(&config.cachedir).into_iter().filter_map(|e| e.ok()) {
+        if entry.depth() > 1 {
+            let path = Path::new(entry.path()).to_str().unwrap();
+            remove_dir(path).is_ok();
+        }
+    }
+
 
     // create iterator over the directory
     for entry in WalkDir::new(&config.cachedir).into_iter().filter_map(|e| e.ok()) {
