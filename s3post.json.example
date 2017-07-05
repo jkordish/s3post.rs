@@ -3,5 +3,6 @@
   "role_arn": "<role arn>",
   "region": "<bucket region>",
   "bucket": "<bucket>",
-  "prefix": "logs"
+  "prefix": "logs",
+  "raw": "raw/<Application>" // optional
 }
