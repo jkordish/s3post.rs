@@ -1,24 +1,23 @@
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![feature(plugin)]
 
-#[macro_use]
-extern crate slog;
-extern crate slog_term;
-extern crate slog_async;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde;
-extern crate serde_json;
+extern crate cadence;
+extern crate chrono;
+extern crate crossbeam;
+extern crate elapsed;
 extern crate flate2;
+extern crate ifaces;
 extern crate rusoto_core;
 extern crate rusoto_s3;
 extern crate rusoto_sts;
-extern crate crossbeam;
-extern crate chrono;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
+#[macro_use]
+extern crate slog;
+extern crate slog_async;
+extern crate slog_term;
 extern crate walkdir;
-extern crate ifaces;
-extern crate cadence;
-extern crate elapsed;
 
 use std::sync::Arc;
 use std::thread;
@@ -368,9 +367,8 @@ fn resend_logs(config: ConfigFile, system: SystemInfo) {
     let metric = MetricRequestHandler::new();
 
     // prune empty directories as overtime we may exhaust inodes
-    for entry in WalkDir::new(&config.cachedir)
-        .into_iter()
-        .filter_map(|e| e.ok())
+    for entry in WalkDir::new(&config.cachedir).into_iter()
+                                               .filter_map(|e| e.ok())
     {
         if entry.depth() > 1 {
             let path = Path::new(entry.path()).to_str().unwrap();
@@ -380,9 +378,8 @@ fn resend_logs(config: ConfigFile, system: SystemInfo) {
 
     // create iterator over the directory
     // this is for the expected gzip's found from stdin which were compressed previously
-    for entry in WalkDir::new(&config.cachedir)
-        .into_iter()
-        .filter_map(|e| e.ok())
+    for entry in WalkDir::new(&config.cachedir).into_iter()
+                                               .filter_map(|e| e.ok())
     {
         // filter out gzip'd file suffixes
         if entry.file_name()
@@ -395,9 +392,8 @@ fn resend_logs(config: ConfigFile, system: SystemInfo) {
 
             // need to return only the parent and strip off the cachedir prefix
             // this then is the path write_s3 is expecting as it is the path within s3
-            let path = Path::new(entry.path().parent().unwrap())
-                .strip_prefix(&config.cachedir)
-                .unwrap();
+            let path = Path::new(entry.path().parent().unwrap()).strip_prefix(&config.cachedir)
+                                                                .unwrap();
             let path = Path::new(path).to_str().unwrap();
 
             // build out the complete path for reading
@@ -421,10 +417,10 @@ fn resend_logs(config: ConfigFile, system: SystemInfo) {
     if config.raw.is_some() {
         // iterate over our raw directory. these should be any text logs
         // these logs don't follow the year/month/date/hour/minute format
-        for entry in
-            WalkDir::new(format!("{}/{}", &config.cachedir, &config.raw.to_owned().unwrap()))
-                .into_iter()
-                .filter_map(|e| e.ok())
+        for entry in WalkDir::new(
+            format!("{}/{}", &config.cachedir, &config.raw.to_owned().unwrap())
+        ).into_iter()
+                     .filter_map(|e| e.ok())
         {
             // get just the file name
             let filename = entry.file_name().to_str().unwrap();
@@ -454,9 +450,8 @@ fn resend_logs(config: ConfigFile, system: SystemInfo) {
 
             // need to return only the parent and strip off the cachedir prefix
             // this then is the path write_s3 is expecting as it is the path within s3
-            let path = Path::new(entry.path().parent().unwrap())
-                .strip_prefix(&config.cachedir)
-                .unwrap();
+            let path = Path::new(entry.path().parent().unwrap()).strip_prefix(&config.cachedir)
+                                                                .unwrap();
             let path = Path::new(path).to_str().unwrap();
 
             // build out the complete path for reading
@@ -486,11 +481,10 @@ fn logging(config: ConfigFile, msg: &str) {
         // have to convert file to a Path
         let path = Path::new(&file).to_str().unwrap();
 
-        let file: File = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .unwrap();
+        let file: File = OpenOptions::new().create(true)
+                                           .append(true)
+                                           .open(path)
+                                           .unwrap();
 
         let decorator = slog_term::PlainDecorator::new(file);
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
