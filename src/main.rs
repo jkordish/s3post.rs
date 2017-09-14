@@ -79,7 +79,7 @@ impl MetricRequestHandler {
     }
 
     fn metric_time(&self, metric: String, time: std::time::Duration) -> Result<(), String> {
-        let metrics_ref = self.metrics.clone();
+        let metrics_ref = Arc::clone(&self.metrics);
         let metric = metric.clone();
 
         let t =
@@ -89,7 +89,7 @@ impl MetricRequestHandler {
         Ok(())
     }
     fn metric_count(&self, metric: String) -> Result<(), String> {
-        let metrics_ref = self.metrics.clone();
+        let metrics_ref = Arc::clone(&self.metrics);
         let metric = metric.clone();
 
         let t = thread::spawn(move || { let _ = metrics_ref.incr(metric.as_ref()); });
