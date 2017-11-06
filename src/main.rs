@@ -78,21 +78,24 @@ impl MetricRequestHandler {
         }
     }
 
-    fn metric_time(&self, metric: String, time: std::time::Duration) -> Result<(), String> {
+    fn metric_time(&self, metric: &str, time: std::time::Duration) -> Result<(), String> {
         let metrics_ref = Arc::clone(&self.metrics);
-        let metric = metric.clone();
+        let metric = metric.to_string();
 
-        let t =
-            thread::spawn(move || { let _ = metrics_ref.time_duration(metric.as_ref(), time); });
+        let t = thread::spawn(move || {
+            let _ = metrics_ref.time_duration(metric.as_ref(), time);
+        });
 
         t.join().unwrap();
         Ok(())
     }
-    fn metric_count(&self, metric: String) -> Result<(), String> {
+    fn metric_count(&self, metric: &str) -> Result<(), String> {
         let metrics_ref = Arc::clone(&self.metrics);
-        let metric = metric.clone();
+        let metric = metric.to_string();
 
-        let t = thread::spawn(move || { let _ = metrics_ref.incr(metric.as_ref()); });
+        let t = thread::spawn(move || {
+            let _ = metrics_ref.incr(metric.as_ref());
+        });
 
         t.join().unwrap();
         Ok(())
@@ -117,7 +120,7 @@ fn main() {
     let config: ConfigFile = serde_json::from_reader(file_open).expect("config has invalid json");
 
     let message: String = "S3POST Starting up!".to_owned();
-    logging(config.clone(), &message);
+    logging(&config.clone(), &message);
 
     // create initial log directory
     // appending /raw to the directory to support raw text logs not from stdin
@@ -157,13 +160,13 @@ fn main() {
         MAX_BYTES,
         MAX_TIMEOUT
     );
-    logging(config.clone(), &message);
+    logging(&config.clone(), &message);
 
     let message = format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr);
-    logging(config.clone(), &message);
+    logging(&config.clone(), &message);
 
     // attempt to resend any logs that we might have not successfully sent
-    resend_logs(config.clone(), system.clone());
+    resend_logs(&config.clone(), &system.clone());
 
     // create a reader from stdin
     let reader = io::stdin();
@@ -185,11 +188,11 @@ fn main() {
                 // add the current bytes to our data vector
                 data.extend(bytes);
                 // evaulate if data and time meet of processing conditions
-                if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES ||
-                    timeout <= time && !data.is_empty()
+                if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES
+                    || timeout <= time && !data.is_empty()
                 {
                     // send the data to the compress function
-                    metric.metric_count("log.collect".to_string()).unwrap();
+                    metric.metric_count(&"log.collect".to_string()).unwrap();
                     compress(data.as_slice(), time, config.clone(), system.clone());
                     // clear our data vector
                     data.clear();
@@ -200,7 +203,7 @@ fn main() {
                     // update the time
                     time = Local::now();
                     // attempt to resend any logs that we might have not successfully sent
-                    resend_logs(config.clone(), system.clone());
+                    resend_logs(&config.clone(), &system.clone());
                 }
             }
             Err(err) => panic!(err)
@@ -259,9 +262,9 @@ fn compress(
             output.write_all(&log).unwrap();
 
             // dump metrics to statsd
-            metric.metric_time("log.compress.time".to_string(), elapsed.duration())
+            metric.metric_time(&"log.compress.time".to_string(), elapsed.duration())
                   .unwrap();
-            metric.metric_count("log.compress.count".to_string())
+            metric.metric_count(&"log.compress.count".to_string())
                   .unwrap();
 
             // call write_s3 to send the gzip'd file to s3
@@ -336,34 +339,34 @@ fn write_s3(config: ConfigFile, system: SystemInfo, file: &str, path: &str, log:
                 // we were successful!
                 Ok(_) => {
                     // write metric to statsd
-                    metric.metric_count("s3.write".to_string()).unwrap();
+                    metric.metric_count(&"s3.write".to_string()).unwrap();
                     // send some notifications
                     let message = format!("Successfully wrote {}/{}", &req.bucket, &s3path);
-                    logging(config.clone(), &message);
+                    logging(&config.clone(), &message);
                     // only remove the file if we are successful
                     let localpath = format!("{}/{}/{}", &config.cachedir, &path, &file);
                     if remove_file(&localpath).is_ok() {
                         // send some notifications
                         let message = format!("Removed file {}", &localpath);
-                        logging(config.clone(), &message);
+                        logging(&config.clone(), &message);
                     } else {
                         // send some notifications
                         let message = format!("Unable to remove file: {}", &localpath);
-                        logging(config.clone(), &message);
+                        logging(&config.clone(), &message);
                     }
                 }
                 Err(e) => {
                     // send some notifications
                     let message = format!("Could not write {} to s3! {}", &file, e);
-                    logging(config.clone(), &message);
-                    metric.metric_count("s3.failure".to_string()).unwrap();
+                    logging(&config.clone(), &message);
+                    metric.metric_count(&"s3.failure".to_string()).unwrap();
                 }
             }
         });
     });
 }
 
-fn resend_logs(config: ConfigFile, system: SystemInfo) {
+fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
     let metric = MetricRequestHandler::new();
 
     // prune empty directories as overtime we may exhaust inodes
@@ -407,9 +410,9 @@ fn resend_logs(config: ConfigFile, system: SystemInfo) {
             let _ = file.read_to_end(&mut contents);
 
             let message = format!("Found unsent log {}/{}", &path, &filename);
-            logging(config.clone(), &message);
+            logging(&config.clone(), &message);
             // pass the unset logs to s3
-            metric.metric_count("s3.resend".to_string()).unwrap();
+            metric.metric_count(&"s3.resend".to_string()).unwrap();
             write_s3(config.clone(), system.clone(), filename, path, &contents);
         }
     }
@@ -465,16 +468,19 @@ fn resend_logs(config: ConfigFile, system: SystemInfo) {
             let _ = file.read_to_end(&mut contents);
 
             let message = format!("Found unsent log {}/{}", &path, &filename);
-            logging(config.clone(), &message);
+            logging(&config.clone(), &message);
             // pass the unset logs to s3
-            metric.metric_count("s3.resend".to_string()).unwrap();
+            metric.metric_count(&"s3.resend".to_string()).unwrap();
             write_s3(config.clone(), system.clone(), filename, path, &contents);
         }
     }
 }
 
-fn logging(config: ConfigFile, msg: &str) {
+fn logging(config: &ConfigFile, msg: &str) {
     // log to logfile otherwise to stdout
+
+    let config = &config.clone();
+
     if config.logfile.is_some() {
         let file = format!("{}/{}", &config.cachedir, &config.logfile.to_owned().unwrap());
 
@@ -491,15 +497,13 @@ fn logging(config: ConfigFile, msg: &str) {
         let drain = slog_async::Async::new(drain).build().fuse();
 
         let logger = slog::Logger::root(drain, o!());
-        info!(logger, "S3POST";
-        "message:" => &msg);
+        info!(logger, "S3POST"; "message:" => &msg);
     } else {
         let decorator = slog_term::TermDecorator::new().build();
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
 
         let logger = slog::Logger::root(drain, o!());
-        info!(logger, "S3POST";
-        "message:" => &msg);
+        info!(logger, "S3POST"; "message:" => &msg);
     }
 }
