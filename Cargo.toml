@@ -1,16 +1,13 @@
 [package]
-name = "s3post"
-version = "0.1.7"
-authors = ["Joseph Kordish <joe@unicornclouds.com>"]
-
+name        = "s3post"
+version     = "0.1.8"
+authors     = ["Joseph Kordish <joe@unicornclouds.com>"]
 description = "Post gzip compressed logs to S3"
-homepage = "https://github.com/jkordish/s3post.rs"
-repository = "https://github.com/jkordish/s3post.rs"
-
-readme = "README.md"
-license = "The MIT License (MIT)"
-
-keywords = [
+homepage    = "https://github.com/jkordish/s3post.rs"
+repository  = "https://github.com/jkordish/s3post.rs"
+readme      = "README.md"
+license     = "The MIT License (MIT)"
+keywords    = [
   "aws",
   "logs",
   "syslog"
@@ -21,24 +18,24 @@ name = "s3post"
 
 
 [dependencies]
-slog = "2"
-slog-stdlog = "2"
-slog-term = "2"
-slog-async = "2"
-flate2 = { version = "^0.2", features = ["miniz-sys"], default-features = false  }
-crossbeam = "^0.3"
-chrono = "^0.4"
-ifaces = "^0.1"
-walkdir = "^2"
-serde_json = "^1"
-serde = "^1"
+slog         = "2"
+slog-stdlog  = "2"
+slog-term    = "2"
+slog-async   = "2"
+flate2       = { version = "^0.2", features = ["miniz-sys"], default-features = false  }
+crossbeam    = "^0.3"
+chrono       = "^0.4"
+ifaces       = "^0.1"
+walkdir      = "^2"
+serde_json   = "^1"
+serde        = "^1"
 serde_derive = "^1"
-rusoto_core = "0.29"
-rusoto_s3 = "0.29"
-rusoto_sts =  "0.29"
-cadence = "0.12"
-elapsed = "0.1"
-clippy = {version="*", optional = true}
+rusoto_core  = "0.29"
+rusoto_s3    = "0.29"
+rusoto_sts   =  "0.29"
+cadence      = "0.12"
+elapsed      = "0.1"
+clippy       = {version="*", optional = true}
 
 [features]
 default=[]
