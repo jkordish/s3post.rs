@@ -149,7 +149,7 @@ fn main() {
 
     // store hostname and ip address in our struct
     let system: SystemInfo = SystemInfo {
-        hostname: hostname,
+        hostname,
         ipaddr: address
     };
 

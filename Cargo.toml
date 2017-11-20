@@ -1,6 +1,6 @@
 [package]
-name = "s3post.rs"
-version = "0.1.6"
+name = "s3post"
+version = "0.1.7"
 authors = ["Joseph Kordish <joe@unicornclouds.com>"]
 
 description = "Post gzip compressed logs to S3"
@@ -12,11 +12,13 @@ license = "The MIT License (MIT)"
 
 keywords = [
   "aws",
-  "logs"
+  "logs",
+  "syslog"
 ]
 
 [[bin]]
 name = "s3post"
+
 
 [dependencies]
 slog = "2"
@@ -27,7 +29,7 @@ flate2 = { version = "^0.2", features = ["miniz-sys"], default-features = false 
 crossbeam = "^0.3"
 chrono = "^0.4"
 ifaces = "^0.1"
-walkdir = "^1"
+walkdir = "^2"
 serde_json = "^1"
 serde = "^1"
 serde_derive = "^1"
@@ -42,6 +44,10 @@ clippy = {version="*", optional = true}
 default=[]
 
 [profile.release]
-panic = "abort"
-lto = true
-opt-level = "s"
+panic            = "abort"
+lto              = true
+debug            = false
+rpath            = false
+opt-level        = 3
+codegen-units    = 1
+debug-assertions = false
