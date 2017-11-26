@@ -24,7 +24,7 @@ use std::thread;
 use std::io;
 use std::process::exit;
 use std::io::prelude::*;
-use std::fs::{create_dir_all, metadata, remove_dir, remove_file, File, OpenOptions};
+use std::fs::{create_dir_all, remove_dir, remove_file, File, OpenOptions};
 use std::collections::HashMap;
 use slog::Drain;
 use std::path::Path;
@@ -37,7 +37,6 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use chrono::prelude::Local;
 use chrono::{Datelike, Duration, Timelike};
-use std::time::UNIX_EPOCH;
 use crossbeam::scope;
 use walkdir::WalkDir;
 use elapsed::measure_time;
@@ -134,7 +133,7 @@ fn main() {
         }
     };
 
-    logging(&config.clone(), "S3POST Starting up!");
+    logging(&config.clone(), "info", "S3POST Starting up!");
 
     // create initial log directory
     // appending /raw to the directory to support raw text logs not from stdin
@@ -175,9 +174,9 @@ fn main() {
         MAX_TIMEOUT
     );
 
-    logging(&config.clone(), &message);
+    logging(&config.clone(), "info", &message);
 
-    logging(&config.clone(), &format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr));
+    logging(&config.clone(), "info", &format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr));
 
     // attempt to resend any logs that we might have not successfully sent
     resend_logs(&config.clone(), &system.clone());
@@ -207,7 +206,7 @@ fn main() {
                     {
                         // send the data to the compress function via seperate thread
                         scope(|scope| {
-                            metric.metric_count(&"log.collect".to_string()).is_ok();
+                            metric.metric_count("log.collect").is_ok();
                             scope.spawn(|| {
                                 compress(&data.clone(), time, config.clone(), system.clone());
                             });
@@ -282,8 +281,8 @@ fn compress(
     output.write_all(&log).unwrap();
 
     // dump metrics to statsd
-    metric.metric_time(&"log.compress.time".to_string(), elapsed.duration()).is_ok();
-    metric.metric_count(&"log.compress.count".to_string()).is_ok();
+    metric.metric_time("log.compress.time", elapsed.duration()).is_ok();
+    metric.metric_count("log.compress.count").is_ok();
 
     // move to new thread
     scope(|scope| {
@@ -358,23 +357,23 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
         // we were successful!
         Ok(_) => {
             // write metric to statsd
-            metric.metric_count(&"s3.write".to_string()).is_ok();
+            metric.metric_count("s3.write").is_ok();
             // send some notifications
-            logging(&config.clone(), &format!("Successfully wrote {}/{}", &req.bucket, &s3path));
+            logging(&config.clone(), "info", &format!("Successfully wrote {}/{}", &req.bucket, &s3path));
             // only remove the file if we are successful
             let localpath = format!("{}/{}/{}", &config.cachedir, &path, &file);
             if remove_file(&localpath).is_ok() {
                 // send some notifications
-                logging(&config.clone(), &format!("Removed file {}", &localpath));
+                logging(&config.clone(), "info", &format!("Removed file {}", &localpath));
             } else {
                 // send some notifications
-                logging(&config.clone(), &format!("Unable to remove file: {}", &localpath));
+                logging(&config.clone(), "error", &format!("Unable to remove file: {}", &localpath));
             }
         }
         Err(e) => {
             // send some notifications
-            logging(&config.clone(), &format!("Could not write {} to s3! {}", &file, e));
-            metric.metric_count(&"s3.failure".to_string()).is_ok();
+            logging(&config.clone(), "error", &format!("Could not write {} to s3! {}", &file, e));
+            metric.metric_count("s3.failure").is_ok();
         }
     }
 }
@@ -422,9 +421,9 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
                     // add our encoded log file to the vector
                     let _ = file.read_to_end(&mut contents);
 
-                    logging(&config.clone(), &format!("Found unsent log {}/{}", &path, &filename));
+                    logging(&config.clone(), "info", &format!("Found unsent log {}/{}", &path, &filename));
                     // pass the unset logs to s3
-                    metric.metric_count(&"s3.resend".to_string()).is_ok();
+                    metric.metric_count("s3.resend").is_ok();
                     write_s3(&config.clone(), &system.clone(), filename, path, &contents);
                 }
         }
@@ -438,29 +437,6 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             .filter_map(|e| e.ok())
             {
                 // get just the file name
-                let filename = entry.file_name().to_str().unwrap();
-                // get the metadata of the file
-                let metadata = metadata(&filename).unwrap();
-                // get the date the file was created
-                let std_duration = metadata.created().unwrap();
-                // convert it to UNIX_EPOCH
-                let duration = std_duration.duration_since(UNIX_EPOCH).unwrap();
-                // now we can convert SystemTime to something Chrono can use
-                let chrono_duration = Duration::from_std(duration).unwrap();
-                let unix_time = chrono::NaiveDateTime::from_timestamp(0, 0);
-                let naive = unix_time + chrono_duration;
-
-                let datetime = format!(
-                    "{}/{}/{}/{}/{}",
-                    naive.year(),
-                    naive.month(),
-                    naive.day(),
-                    naive.hour(),
-                    naive.minute()
-                );
-
-                println!("{:?}", &datetime);
-
                 let filename = entry.file_name().to_str().unwrap();
 
                 // need to return only the parent and strip off the cachedir prefix
@@ -479,9 +455,9 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
                 // add our encoded log file to the vector
                 let _ = file.read_to_end(&mut contents);
 
-                logging(&config.clone(), &format!("Found unsent log {}/{}", &path, &filename));
+                logging(&config.clone(), "info", &format!("Found unsent log {}/{}", &path, &filename));
                 // pass the unset logs to s3
-                metric.metric_count(&"s3.resend".to_string()).is_ok();
+                metric.metric_count("s3.resend").is_ok();
                 scope(|scope| {
                     scope.spawn(move || {
                         write_s3(&config.clone(), &system.clone(), filename, path, &contents);
@@ -491,7 +467,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
     }
 }
 
-fn logging(config: &ConfigFile, msg: &str) {
+fn logging(config: &ConfigFile, log_type: &str, msg: &str) {
     // log to logfile otherwise to stdout
     let config = &config.clone();
 
@@ -511,13 +487,23 @@ fn logging(config: &ConfigFile, msg: &str) {
         let drain = slog_async::Async::new(drain).build().fuse();
 
         let logger = slog::Logger::root(drain, o!());
-        info!(logger, "S3POST"; "message:" => &msg);
+        match log_type {
+            "info" => info!(logger, "S3POST"; "[*]" => &msg),
+            "error" => error!(logger, "S3POST"; "[*]" => &msg),
+            "crit" => crit!(logger, "S3POST"; "[*]" => &msg),
+            _ => {}
+        }
     } else {
         let decorator = slog_term::TermDecorator::new().build();
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
 
         let logger = slog::Logger::root(drain, o!());
-        info!(logger, "S3POST"; "message:" => &msg);
+        match log_type {
+            "info" => info!(logger, "S3POST"; "[*]" => &msg),
+            "error" => error!(logger, "S3POST"; "[*]" => &msg),
+            "crit" => crit!(logger, "S3POST"; "[*]" => &msg),
+            _ => {}
+        }
     }
 }

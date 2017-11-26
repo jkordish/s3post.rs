@@ -1,6 +1,8 @@
 # s3post.rs
 Take logs from stdin then compress and send to S3.
 
+Ideally you could couple this with a syslog remote server for the collection of all logs from systems pointed at it.
+
 ## config
 ```json
 {
@@ -22,7 +24,7 @@ $ curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain nightly
 ```
 
 ```shell
-$ git clone https://ghe.eng.fireeye.com/joseph-kordish/s3post.rs.git
+$ git clone https://github.com/jkordish/s3post.rs.git
 ```
 
 ```shell
@@ -31,3 +33,12 @@ $ cargo build --release
 ```
 
 Binary will be target/release/s3post
+
+### simple install
+```shell
+$ curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain nightly
+```
+
+```shell
+$ cargo install --git https://github.com/jkordish/s3post.rs.git
+```
