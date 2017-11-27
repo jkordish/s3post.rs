@@ -89,12 +89,16 @@ impl MetricRequestHandler {
         t.join().is_ok();
         Ok(())
     }
-    fn metric_count(&self, metric: &str) -> Result<(), String> {
+    fn metric_count(&self, num: i32, metric: &str) -> Result<(), String> {
         let metrics_ref = Arc::clone(&self.metrics);
         let metric = metric.to_string();
 
         let t = thread::spawn(move || {
-            let _ = metrics_ref.incr(metric.as_ref());
+            match num {
+                0 => { let _ = metrics_ref.decr(metric.as_ref()); },
+                1 => { let _ = metrics_ref.incr(metric.as_ref()); },
+                _ => ()
+            };
         });
 
         t.join().is_ok();
@@ -207,10 +211,10 @@ fn main() {
                 if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES
                     || timeout <= time && !data.is_empty()
                     {
-                        // send the data to the compress function via seperate thread
+                        // send the data to the compress function via separate thread
                         scope(|scope| {
-                            metric.metric_count("log.collect").is_ok();
                             scope.spawn(|| {
+                                metric.metric_count(1,"log.collect").is_ok();
                                 compress(&data.clone(), time, config.clone(), system.clone());
                             });
                         });
@@ -285,7 +289,7 @@ fn compress(
 
     // dump metrics to statsd
     metric.metric_time("log.compress.time", elapsed.millis()).is_ok();
-    metric.metric_count("log.compress.count").is_ok();
+    metric.metric_count(1,"log.compress.count").is_ok();
 
     // move to new thread
     scope(|scope| {
@@ -363,7 +367,9 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
         // we were successful!
         Ok(_) => {
             // write metric to statsd
-            metric.metric_count("s3.write").is_ok();
+            metric.metric_count(1,"s3.write").is_ok();
+            metric.metric_count(0,"s3.failure").is_ok();
+
             // send some notifications
             logging(&config.clone(), "info", &format!("Successfully wrote {}/{}", &req.bucket, &s3path));
             // only remove the file if we are successful
@@ -379,7 +385,7 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
         Err(e) => {
             // send some notifications
             logging(&config.clone(), "error", &format!("Could not write {} to s3! {}", &file, e));
-            metric.metric_count("s3.failure").is_ok();
+            metric.metric_count(1,"s3.failure").is_ok();
         }
     }
 }
@@ -429,7 +435,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
 
                     logging(&config.clone(), "info", &format!("Found unsent log {}/{}", &path, &filename));
                     // pass the unset logs to s3
-                    metric.metric_count("s3.resend").is_ok();
+                    metric.metric_count(1, "s3.resend").is_ok();
                     write_s3(&config.clone(), &system.clone(), filename, path, &contents);
                 }
         }
@@ -463,7 +469,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
 
                 logging(&config.clone(), "info", &format!("Found unsent log {}/{}", &path, &filename));
                 // pass the unset logs to s3
-                metric.metric_count("s3.resend").is_ok();
+                metric.metric_count(1, "s3.resend").is_ok();
                 scope(|scope| {
                     scope.spawn(move || {
                         write_s3(&config.clone(), &system.clone(), filename, path, &contents);
