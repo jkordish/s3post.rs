@@ -89,14 +89,14 @@ impl MetricRequestHandler {
         t.join().is_ok();
         Ok(())
     }
-    fn metric_count(&self, num: i32, metric: &str) -> Result<(), String> {
+    fn metric_count(&self, num: i64, metric: &str) -> Result<(), String> {
         let metrics_ref = Arc::clone(&self.metrics);
         let metric = metric.to_string();
 
         let t = thread::spawn(move || {
             match num {
-                0 => { let _ = metrics_ref.decr(metric.as_ref()); },
-                1 => { let _ = metrics_ref.incr(metric.as_ref()); },
+                0 => { let _ = metrics_ref.count(metric.as_ref(), 0); },
+                1 => { let _ = metrics_ref.count(metric.as_ref(), 1); },
                 _ => ()
             };
         });
@@ -199,9 +199,6 @@ fn main() {
     // create initial timeout
     let mut timeout = time + Duration::seconds(MAX_TIMEOUT);
 
-    // set new metric thread handler
-    let metric = MetricRequestHandler::new();
-
     loop {
         match buffer.fill_buf() {
             Ok(bytes) => {
@@ -214,7 +211,6 @@ fn main() {
                         // send the data to the compress function via separate thread
                         scope(|scope| {
                             scope.spawn(|| {
-                                metric.metric_count(1,"log.collect").is_ok();
                                 compress(&data.clone(), time, config.clone(), system.clone());
                             });
                         });
