@@ -178,6 +178,9 @@ fn main() {
 
     logging(&config.clone(), "info", &format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr));
 
+    // create the cachedir in case it isn't there already
+    let _ = create_dir_all(&config.cachedir);
+
     // attempt to resend any logs that we might have not successfully sent
     resend_logs(&config.clone(), &system.clone());
 
@@ -265,7 +268,7 @@ fn compress(
     let fullpath = format!("{}/{}", &config.cachedir, &path);
 
     // create the directory structure
-    let _ = create_dir_all(&fullpath);
+    let _ = create_dir_all(&format!("{}/{}", &config.cachedir, &path));
 
     // create the file in the full path
     let mut output = File::create(format!("{}/{}", &fullpath, &file)).unwrap();
@@ -302,7 +305,10 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
     // set up our credentials provider for aws
     let provider = match DefaultCredentialsProvider::new() {
         Ok(provider) => provider,
-        Err(err) => panic!("Unable to load credentials. {}", err)
+        Err(_) => {
+            logging(&config.clone(), "crit", "Unable to load credentials.");
+            exit(1)
+        }
     };
 
     // initiate our sts client
