@@ -78,12 +78,12 @@ impl MetricRequestHandler {
         }
     }
 
-    fn metric_time(&self, metric: &str, time: std::time::Duration) -> Result<(), String> {
+    fn metric_time(&self, metric: &str, time: u64) -> Result<(), String> {
         let metrics_ref = Arc::clone(&self.metrics);
         let metric = metric.to_string();
 
         let t = thread::spawn(move || {
-            let _ = metrics_ref.time_duration(metric.as_ref(), time);
+            let _ = metrics_ref.time(metric.as_ref(), time);
         });
 
         t.join().is_ok();
@@ -284,7 +284,7 @@ fn compress(
     output.write_all(&log).unwrap();
 
     // dump metrics to statsd
-    metric.metric_time("log.compress.time", elapsed.duration()).is_ok();
+    metric.metric_time("log.compress.time", elapsed.millis()).is_ok();
     metric.metric_count("log.compress.count").is_ok();
 
     // move to new thread
