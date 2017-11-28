@@ -328,12 +328,18 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
         None
     );
     // allow our STS to auto-refresh
-    let auto_sts_provider = AutoRefreshingProvider::with_refcell(sts_provider);
+    let auto_sts_provider = match AutoRefreshingProvider::with_refcell(sts_provider) {
+        Ok(auto_sts_provider) => auto_sts_provider,
+        Err(_) => {
+            logging(&config.clone(), "crit", "Unable to load STS credentials");
+            exit(1)
+        }
+    };
 
     // create our s3 client initialization
     let s3 = S3Client::new(
         default_tls_client().unwrap(),
-        auto_sts_provider.unwrap(),
+        auto_sts_provider,
         Region::from_str(&config.region).unwrap()
     );
 
