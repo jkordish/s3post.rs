@@ -1,4 +1,4 @@
-# s3post.rs
+# s3post.rs [![Build Status](https://travis-ci.org/jkordish/s3post.rs.svg?branch=master)](https://travis-ci.org/jkordish/s3post.rs)
 Take logs from stdin then compress and send to S3.
 
 Ideally you could couple this with a syslog remote server for the collection of all logs from systems pointed at it.
