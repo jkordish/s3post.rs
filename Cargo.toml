@@ -18,11 +18,11 @@ name = "s3post"
 
 
 [dependencies]
-slog         = "2"
-slog-stdlog  = "2"
-slog-term    = "2"
-slog-async   = "2"
-flate2       = { version = "^0.2", features = ["miniz-sys"], default-features = false  }
+slog         = "^2"
+slog-stdlog  = "^2"
+slog-term    = "^2"
+slog-async   = "^2"
+flate2       = { version = "^1", features = ["rust_backend"], default-features = false  }
 crossbeam    = "^0.3"
 chrono       = "^0.4"
 ifaces       = "^0.1"

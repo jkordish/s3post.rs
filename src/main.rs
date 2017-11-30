@@ -274,7 +274,7 @@ fn compress(
     let mut output = File::create(format!("{}/{}", &fullpath, &file)).unwrap();
 
     // create a gzip encoder
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::Default);
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
 
     // encode the retrieved bytes
     let (elapsed, _) = measure_time(|| encoder.write_all(bytes).unwrap());
