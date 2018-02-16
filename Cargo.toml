@@ -20,10 +20,10 @@ path = "src/main.rs"
 
 [dependencies]
 slog         = "^2"
-slog-stdlog  = "^2"
+slog-stdlog  = "^3"
 slog-term    = "^2"
 slog-async   = "^2"
-flate2       = { version = "^1", features = ["rust_backend"], default-features = false  }
+flate2       = { version = "^1", features = ["rust_backend"], default-features = false }
 crossbeam    = "^0.3"
 chrono       = "^0.4"
 ifaces       = "^0.1"
@@ -31,10 +31,10 @@ walkdir      = "^2"
 serde_json   = "^1"
 serde        = "^1"
 serde_derive = "^1"
-rusoto_core  = "0.30"
-rusoto_s3    = "0.30"
-rusoto_sts   =  "0.30"
-cadence      = "0.12"
+rusoto_core  = "0.31"
+rusoto_s3    = "0.31"
+rusoto_sts   = "0.31"
+cadence      = "0.13"
 elapsed      = "0.1"
 clippy       = {version="*", optional = true}
 
