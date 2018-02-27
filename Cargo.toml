@@ -1,6 +1,6 @@
 [package]
 name        = "s3post"
-version     = "0.1.12"
+version     = "0.1.13"
 authors     = ["Joseph Kordish <joe@unicornclouds.com>"]
 description = "Post gzip compressed logs to S3"
 homepage    = "https://github.com/jkordish/s3post.rs"
