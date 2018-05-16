@@ -1,8 +1,6 @@
 language: rust
 rust:
   - nightly
-script:
-  - cargo build --features clippy
 cache: cargo
 before_deploy:
   - git config --local user.name "jkordish"
