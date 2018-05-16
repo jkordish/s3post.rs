@@ -30,7 +30,7 @@ use slog::Drain;
 use std::path::Path;
 use std::env;
 use std::str::FromStr;
-use rusoto_core::{default_tls_client, AutoRefreshingProvider, DefaultCredentialsProvider, Region};
+use rusoto_core::{AutoRefreshingProvider, Region};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
 use rusoto_s3::{PutObjectRequest, S3, S3Client};
 use flate2::Compression;
@@ -118,7 +118,7 @@ const MAX_TIMEOUT: i64 = 30;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-    if args.len() < 1 {
+    if args.is_empty() {
         println!("s3post <config.json>");
         exit(1)
     }
@@ -307,26 +307,14 @@ fn compress(
 }
 
 fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, log: &[u8]) {
-    let metric = MetricRequestHandler::new();
+    let _metric = MetricRequestHandler::new();
 
     // move to new thread
     let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
-    // set up our credentials provider for aws
-    let provider = match DefaultCredentialsProvider::new() {
-        Ok(provider) => provider,
-        Err(_) => {
-            logging(&config.clone(), "crit", "Unable to load credentials.");
-            exit(1)
-        }
-    };
-
     // initiate our sts client
-    let sts_client = StsClient::new(
-        default_tls_client().unwrap(),
-        provider,
-        Region::from_str(&config.region).unwrap(),
-    );
+    let sts_client = StsClient::simple(Region::from_str(&config.region).unwrap());
+
     // generate a sts provider
     let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(
         sts_client,
@@ -337,9 +325,10 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
         None,
         None,
     );
+
     // allow our STS to auto-refresh
-    let auto_sts_provider = match AutoRefreshingProvider::with_refcell(sts_provider) {
-        Ok(auto_sts_provider) => auto_sts_provider,
+    let _auto_sts_provider = match AutoRefreshingProvider::with_refcell(sts_provider) {
+        Ok(_auto_sts_provider) => _auto_sts_provider,
         Err(_) => {
             logging(&config.clone(), "crit", "Unable to obtain STS token");
             exit(1)
@@ -347,11 +336,7 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
     };
 
     // create our s3 client initialization
-    let s3 = S3Client::new(
-        default_tls_client().unwrap(),
-        auto_sts_provider,
-        Region::from_str(&config.region).unwrap(),
-    );
+    let s3 = S3Client::simple(Region::from_str(&config.region).unwrap());
 
     // create a u8 vector
     let mut contents: Vec<u8> = Vec::new();
@@ -375,12 +360,14 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
         ..Default::default()
     };
 
-    match s3.put_object(&req) {
+
+//    s3.put_object(&req);
+    match s3.put_object(&req).sync() {
         // we were successful!
         Ok(_) => {
             // write metric to statsd
-            metric.metric_count(1, "s3.write").is_ok();
-            metric.metric_count(0, "s3.failure").is_ok();
+            _metric.metric_count(1, "s3.write").is_ok();
+            _metric.metric_count(0, "s3.failure").is_ok();
 
             // send some notifications
             logging(
@@ -413,13 +400,13 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
                 "error",
                 &format!("Could not write {} to s3! {}", &file, e),
             );
-            metric.metric_count(1, "s3.failure").is_ok();
+            _metric.metric_count(1, "s3.failure").is_ok();
         }
     }
 }
 
 fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
-    let metric = MetricRequestHandler::new();
+    let _metric = MetricRequestHandler::new();
 
     // prune empty directories as overtime we may exhaust inodes
     for entry in WalkDir::new(&config.cachedir)
@@ -471,7 +458,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
                 &format!("Found unsent log {}/{}", &path, &filename),
             );
             // pass the unset logs to s3
-            metric.metric_count(1, "s3.resend").is_ok();
+            _metric.metric_count(1, "s3.resend").is_ok();
             write_s3(&config.clone(), &system.clone(), filename, path, &contents);
         }
     }
@@ -512,7 +499,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
                 &format!("Found unsent log {}/{}", &path, &filename),
             );
             // pass the unset logs to s3
-            metric.metric_count(1, "s3.resend").is_ok();
+            _metric.metric_count(1, "s3.resend").is_ok();
             scope(|scope| {
                 scope.spawn(move || {
                     write_s3(&config.clone(), &system.clone(), filename, path, &contents);
