@@ -1,5 +1,8 @@
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![feature(plugin)]
+#![feature(nll)]
+#![allow(unknown_lints)]
+// #![warn(clippy)]
 
 extern crate cadence;
 extern crate chrono;
@@ -19,30 +22,23 @@ extern crate slog_async;
 extern crate slog_term;
 extern crate walkdir;
 
-use std::sync::Arc;
-use std::thread;
-use std::io;
-use std::process::exit;
-use std::io::prelude::*;
-use std::fs::{create_dir_all, remove_dir, remove_file, File, OpenOptions};
-use std::collections::HashMap;
-use slog::Drain;
-use std::path::Path;
-use std::env;
-use std::str::FromStr;
-use rusoto_core::{AutoRefreshingProvider, Region};
-use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
-use rusoto_s3::{PutObjectRequest, S3, S3Client};
-use flate2::Compression;
-use flate2::write::GzEncoder;
-use chrono::prelude::Local;
-use chrono::{Datelike, Duration, Timelike};
+use cadence::{prelude::*, BufferedUdpMetricSink, StatsdClient, DEFAULT_PORT};
+use chrono::{prelude::Local, Datelike, Duration, Timelike};
 use crossbeam::scope;
-use walkdir::WalkDir;
 use elapsed::measure_time;
-use std::net::UdpSocket;
-use cadence::prelude::*;
-use cadence::{BufferedUdpMetricSink, StatsdClient, DEFAULT_PORT};
+use flate2::{write::GzEncoder, Compression};
+use rusoto_core::{AutoRefreshingProvider, Region};
+use rusoto_s3::{PutObjectRequest, S3, S3Client};
+use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
+use slog::Drain;
+use std::{
+    collections::HashMap, env, fs::{create_dir_all, remove_dir, remove_file, File, OpenOptions},
+    net::UdpSocket
+};
+use std::{
+    error::Error, io, io::prelude::*, path::Path, process::exit, str::FromStr, sync::Arc, thread
+};
+use walkdir::WalkDir;
 
 // struct for our config file
 #[derive(Serialize, Deserialize, Clone)]
@@ -53,19 +49,18 @@ struct ConfigFile {
     bucket: String,
     prefix: String,
     logfile: Option<String>,
-    raw: Option<String>,
+    raw: Option<String>
 }
 
 // struct for our system information
 #[derive(Clone)]
 struct SystemInfo {
     hostname: String,
-    ipaddr: String,
+    ipaddr: String
 }
 
-
 pub struct MetricRequestHandler {
-    metrics: Arc<MetricClient + Send + Sync>,
+    metrics: Arc<MetricClient + Send + Sync>
 }
 
 impl MetricRequestHandler {
@@ -74,7 +69,7 @@ impl MetricRequestHandler {
         let host = ("localhost", DEFAULT_PORT);
         let sink = BufferedUdpMetricSink::from(host, socket).unwrap();
         MetricRequestHandler {
-            metrics: Arc::new(StatsdClient::from_sink("s3post", sink)),
+            metrics: Arc::new(StatsdClient::from_sink("s3post", sink))
         }
     }
 
@@ -101,7 +96,7 @@ impl MetricRequestHandler {
                 1 => {
                     let _ = metrics_ref.count(metric.as_ref(), 1);
                 }
-                _ => (),
+                _ => ()
             };
         });
 
@@ -110,13 +105,12 @@ impl MetricRequestHandler {
     }
 }
 
-
 // few consts. might make these configurable later
 const MAX_LINES: usize = 50_000;
 const MAX_BYTES: usize = 10_485_760;
 const MAX_TIMEOUT: i64 = 30;
 
-fn main() {
+fn main() -> Result<(), Box<Error>> {
     let args: Vec<_> = env::args().collect();
     if args.is_empty() {
         println!("s3post <config.json>");
@@ -136,12 +130,12 @@ fn main() {
     let config: ConfigFile = match serde_json::from_reader(file_open) {
         Ok(json) => json,
         Err(_) => {
-            println!("{} valid json?", &args[1]);
+            println!("{} invalid json?", &args[1]);
             exit(1)
         }
     };
 
-    logging(&config.clone(), "info", "S3POST Starting up!");
+    logging(&config.clone(), "info", "S3POST Starting up!").is_ok();
 
     // create initial log directory
     // appending /raw to the directory to support raw text logs not from stdin
@@ -152,49 +146,44 @@ fn main() {
     let mut hostname = String::new();
     if let Ok(mut file) = File::open("/etc/hostname") {
         let mut buffer = String::new();
-        let _ = file.read_to_string(&mut buffer).unwrap().to_string();
-        hostname = buffer.trim().to_owned();
+        let _ = file.read_to_string(&mut buffer)?.to_string();
+        hostname = buffer.trim().to_string();
     } else {
         hostname = "localhost".to_string();
     }
 
     // need the ipaddr of our interface. will be part of the metadata
-    let mut address = String::new();
-    for iface in ifaces::Interface::get_all().unwrap() {
+    let mut ipaddr = String::new();
+    for iface in ifaces::Interface::get_all()? {
         if iface.kind == ifaces::Kind::Ipv4 {
-            address = format!("{}", iface.addr.unwrap());
-            address = address.replace(":0", "");
+            ipaddr = format!("{}", iface.addr.unwrap());
+            ipaddr = ipaddr.replace(":0", "");
         }
         continue;
     }
 
     // store hostname and ip address in our struct
-    let system: SystemInfo = SystemInfo {
-        hostname,
-        ipaddr: address,
-    };
+    let system: SystemInfo = SystemInfo { hostname, ipaddr };
 
     //
     let message = format!(
         "MAX_LINES: {}  MAX_BYTES: {}  MAX_TIMEOUT:{}",
-        MAX_LINES,
-        MAX_BYTES,
-        MAX_TIMEOUT
+        MAX_LINES, MAX_BYTES, MAX_TIMEOUT
     );
 
-    logging(&config.clone(), "info", &message);
+    logging(&config.clone(), "info", &message).is_ok();
 
     logging(
         &config.clone(),
         "info",
-        &format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr),
-    );
+        &format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr)
+    ).is_ok();
 
     // create the cachedir in case it isn't there already
     let _ = create_dir_all(&config.cachedir);
 
     // attempt to resend any logs that we might have not successfully sent
-    resend_logs(&config.clone(), &system.clone());
+    resend_logs(&config.clone(), &system.clone())?;
 
     // create a reader from stdin
     let reader = io::stdin();
@@ -213,13 +202,14 @@ fn main() {
                 // add the current bytes to our data vector
                 data.extend(bytes);
                 // evaluate if data and time meet of processing conditions
-                if data.lines().count() >= MAX_LINES || data.len() >= MAX_BYTES
+                if data.lines().count() >= MAX_LINES
+                    || data.len() >= MAX_BYTES
                     || timeout <= time && !data.is_empty()
                 {
                     // send the data to the compress function via separate thread
                     scope(|scope| {
                         scope.spawn(|| {
-                            compress(&data.clone(), time, config.clone(), system.clone());
+                            compress(&data.clone(), time, config.clone(), system.clone()).is_ok();
                         });
                     });
                     // clear our data vector
@@ -233,12 +223,12 @@ fn main() {
                         time = Local::now();
                         // attempt to resend any logs that we might have not successfully sent
                         scope.spawn(|| {
-                            resend_logs(&config.clone(), &system.clone());
+                            resend_logs(&config.clone(), &system.clone()).unwrap();
                         });
                     });
                 }
             }
-            Err(err) => panic!(err),
+            Err(err) => panic!(err)
         }
         // consume the data from the buffer so we don't reprocess it
         buffer.consume(data.len());
@@ -249,8 +239,8 @@ fn compress(
     bytes: &[u8],
     timestamp: chrono::DateTime<chrono::Local>,
     config: ConfigFile,
-    system: SystemInfo,
-) {
+    system: SystemInfo
+) -> Result<(), Box<Error>> {
     let metric = MetricRequestHandler::new();
 
     // our compression routine will be sent to another thread
@@ -279,17 +269,17 @@ fn compress(
     let _ = create_dir_all(&format!("{}/{}", &config.cachedir, &path));
 
     // create the file in the full path
-    let mut output = File::create(format!("{}/{}", &fullpath, &file)).unwrap();
+    let mut output = File::create(format!("{}/{}", &fullpath, &file))?;
 
     // create a gzip encoder
     let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
 
     // encode the retrieved bytes
     let (elapsed, _) = measure_time(|| encoder.write_all(bytes).unwrap());
-    let log = encoder.finish().unwrap();
+    let log = encoder.finish()?;
 
     // write out the encoded data to our file
-    output.write_all(&log).unwrap();
+    output.write_all(&log)?;
 
     // dump metrics to statsd
     metric
@@ -301,42 +291,49 @@ fn compress(
     scope(|scope| {
         scope.spawn(move || {
             // call write_s3 to send the gzip'd file to s3
-            write_s3(&config.clone(), &system.clone(), &file, &path, &log);
+            write_s3(&config.clone(), &system.clone(), &file, &path, &log).is_ok();
         });
     });
+    Ok(())
 }
 
-fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, log: &[u8]) {
+fn write_s3(
+    config: &ConfigFile,
+    system: &SystemInfo,
+    file: &str,
+    path: &str,
+    log: &[u8]
+) -> Result<(), Box<Error>> {
     let _metric = MetricRequestHandler::new();
 
     // move to new thread
     let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
     // initiate our sts client
-    let sts_client = StsClient::simple(Region::from_str(&config.region).unwrap());
+    let sts_client = StsClient::simple(Region::from_str(&config.region)?);
 
     // generate a sts provider
     let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(
         sts_client,
         config.role_arn.to_owned(),
-        "s3post".to_owned(),
+        "s3post".to_string(),
         None,
         None,
         None,
-        None,
+        None
     );
 
     // allow our STS to auto-refresh
     let _auto_sts_provider = match AutoRefreshingProvider::with_refcell(sts_provider) {
         Ok(_auto_sts_provider) => _auto_sts_provider,
         Err(_) => {
-            logging(&config.clone(), "crit", "Unable to obtain STS token");
+            logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
             exit(1)
         }
     };
 
     // create our s3 client initialization
-    let s3 = S3Client::simple(Region::from_str(&config.region).unwrap());
+    let s3 = S3Client::simple(Region::from_str(&config.region)?);
 
     // create a u8 vector
     let mut contents: Vec<u8> = Vec::new();
@@ -360,8 +357,6 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
         ..Default::default()
     };
 
-
-//    s3.put_object(&req);
     match s3.put_object(&req).sync() {
         // we were successful!
         Ok(_) => {
@@ -373,8 +368,8 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
             logging(
                 &config.clone(),
                 "info",
-                &format!("Successfully wrote {}/{}", &req.bucket, &s3path),
-            );
+                &format!("Successfully wrote {}/{}", &req.bucket, &s3path)
+            ).is_ok();
             // only remove the file if we are successful
             let localpath = format!("{}/{}/{}", &config.cachedir, &path, &file);
             if remove_file(&localpath).is_ok() {
@@ -382,15 +377,15 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
                 logging(
                     &config.clone(),
                     "info",
-                    &format!("Removed file {}", &localpath),
-                );
+                    &format!("Removed file {}", &localpath)
+                )
             } else {
                 // send some notifications
                 logging(
                     &config.clone(),
                     "error",
-                    &format!("Unable to remove file: {}", &localpath),
-                );
+                    &format!("Unable to remove file: {}", &localpath)
+                )
             }
         }
         Err(e) => {
@@ -398,14 +393,15 @@ fn write_s3(config: &ConfigFile, system: &SystemInfo, file: &str, path: &str, lo
             logging(
                 &config.clone(),
                 "error",
-                &format!("Could not write {} to s3! {}", &file, e),
-            );
+                &format!("Could not write {} to s3! {}", &file, e)
+            ).is_ok();
             _metric.metric_count(1, "s3.failure").is_ok();
+            Ok(())
         }
     }
 }
 
-fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
+fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error>> {
     let _metric = MetricRequestHandler::new();
 
     // prune empty directories as overtime we may exhaust inodes
@@ -430,7 +426,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             .file_name()
             .to_str()
             .map(|s| s.ends_with(".gz"))
-            .unwrap()
+            .unwrap_or(false)
         {
             // get just the file name
             let filename = entry.file_name().to_str().unwrap();
@@ -440,12 +436,13 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             let path = Path::new(entry.path().parent().unwrap())
                 .strip_prefix(&config.cachedir)
                 .unwrap();
+
             let path = Path::new(path).to_str().unwrap();
 
             // build out the complete path for reading
             let filepath = format!("{}/{}/{}", &config.cachedir, &path, &filename);
             // open the file for reading
-            let mut file = File::open(&filepath).expect("Unable to read file");
+            let mut file = File::open(&filepath).unwrap();
 
             // create a u8 vector
             let mut contents: Vec<u8> = Vec::new();
@@ -455,24 +452,20 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             logging(
                 &config.clone(),
                 "info",
-                &format!("Found unsent log {}/{}", &path, &filename),
-            );
+                &format!("Found unsent log {}/{}", &path, &filename)
+            ).is_ok();
             // pass the unset logs to s3
             _metric.metric_count(1, "s3.resend").is_ok();
-            write_s3(&config.clone(), &system.clone(), filename, path, &contents);
+            write_s3(&config.clone(), &system.clone(), filename, path, &contents).is_ok();
         }
     }
 
     if config.raw.is_some() {
         // iterate over our raw directory. these should be any text logs
         // these logs don't follow the year/month/date/hour/minute format
-        for entry in WalkDir::new(format!(
-            "{}/{}",
-            &config.cachedir,
-            &config.raw.to_owned().unwrap()
-        )).into_iter()
-            .filter_map(|e| e.ok())
-        {
+        let directory = format!("{}/{}", &config.cachedir, &config.raw.to_owned().unwrap());
+
+        for entry in WalkDir::new(&directory).into_iter().filter_map(|e| e.ok()) {
             // get just the file name
             let filename = entry.file_name().to_str().unwrap();
 
@@ -486,7 +479,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             // build out the complete path for reading
             let filepath = format!("{}/{}/{}", &config.cachedir, &path, &filename);
             // open the file for reading
-            let mut file = File::open(&filepath).expect("Unable to read file");
+            let mut file = File::open(&filepath).unwrap();
 
             // create a u8 vector
             let mut contents: Vec<u8> = Vec::new();
@@ -496,20 +489,17 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) {
             logging(
                 &config.clone(),
                 "info",
-                &format!("Found unsent log {}/{}", &path, &filename),
-            );
+                &format!("Found unsent log {}/{}", &path, &filename)
+            ).is_ok();
             // pass the unset logs to s3
             _metric.metric_count(1, "s3.resend").is_ok();
-            scope(|scope| {
-                scope.spawn(move || {
-                    write_s3(&config.clone(), &system.clone(), filename, path, &contents);
-                });
-            });
+            write_s3(&config.clone(), &system.clone(), filename, path, &contents).is_ok();
         }
-    }
+    };
+    Ok(())
 }
 
-fn logging(config: &ConfigFile, log_type: &str, msg: &str) {
+fn logging(config: &ConfigFile, log_type: &str, msg: &str) -> Result<(), Box<Error>> {
     // log to logfile otherwise to stdout
     let config = &config.clone();
 
@@ -523,11 +513,7 @@ fn logging(config: &ConfigFile, log_type: &str, msg: &str) {
         // have to convert file to a Path
         let path = Path::new(&file).to_str().unwrap();
 
-        let file: File = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .unwrap();
+        let file: File = OpenOptions::new().create(true).append(true).open(path)?;
 
         let decorator = slog_term::PlainDecorator::new(file);
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
@@ -535,10 +521,19 @@ fn logging(config: &ConfigFile, log_type: &str, msg: &str) {
 
         let logger = slog::Logger::root(drain, o!());
         match log_type {
-            "info" => info!(logger, "S3POST"; "[*]" => &msg),
-            "error" => error!(logger, "S3POST"; "[*]" => &msg),
-            "crit" => crit!(logger, "S3POST"; "[*]" => &msg),
-            _ => {}
+            "info" => {
+                info!(logger, "S3POST"; "[*]" => &msg);
+                Ok(())
+            }
+            "error" => {
+                error!(logger, "S3POST"; "[*]" => &msg);
+                Ok(())
+            }
+            "crit" => {
+                crit!(logger, "S3POST"; "[*]" => &msg);
+                Ok(())
+            }
+            _ => Ok(())
         }
     } else {
         let decorator = slog_term::TermDecorator::new().build();
@@ -547,10 +542,19 @@ fn logging(config: &ConfigFile, log_type: &str, msg: &str) {
 
         let logger = slog::Logger::root(drain, o!());
         match log_type {
-            "info" => info!(logger, "S3POST"; "[*]" => &msg),
-            "error" => error!(logger, "S3POST"; "[*]" => &msg),
-            "crit" => crit!(logger, "S3POST"; "[*]" => &msg),
-            _ => {}
+            "info" => {
+                info!(logger, "S3POST"; "[*]" => &msg);
+                Ok(())
+            }
+            "error" => {
+                error!(logger, "S3POST"; "[*]" => &msg);
+                Ok(())
+            }
+            "crit" => {
+                crit!(logger, "S3POST"; "[*]" => &msg);
+                Ok(())
+            }
+            _ => Ok(())
         }
     }
 }
