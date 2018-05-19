@@ -1,15 +1,13 @@
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![feature(plugin)]
 #![feature(nll)]
-#![allow(unknown_lints)]
-// #![warn(clippy)]
-
+#[cfg_attr(feature = "cargo-clippy", allow(clippy_pedantic))]
 extern crate cadence;
 extern crate chrono;
 extern crate crossbeam;
 extern crate elapsed;
 extern crate flate2;
-extern crate ifaces;
+extern crate get_if_addrs;
 extern crate rusoto_core;
 extern crate rusoto_s3;
 extern crate rusoto_sts;
@@ -32,7 +30,8 @@ use rusoto_s3::{PutObjectRequest, S3, S3Client};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
 use slog::Drain;
 use std::{
-    collections::HashMap, env, fs::{create_dir_all, remove_dir, remove_file, File, OpenOptions},
+    collections::HashMap, env,
+    fs::{create_dir_all, read_to_string, remove_dir, remove_file, File, OpenOptions},
     net::UdpSocket
 };
 use std::{
@@ -115,19 +114,10 @@ fn main() -> Result<(), Box<Error>> {
     if args.is_empty() {
         println!("s3post <config.json>");
         exit(1)
-    }
-
-    // open our config file
-    let file_open = match File::open(&args[1]) {
-        Ok(file) => file,
-        Err(_) => {
-            println!("Unable to open {}", &args[1]);
-            exit(1)
-        }
     };
 
     // attempt to deserialize the config to our struct
-    let config: ConfigFile = match serde_json::from_reader(file_open) {
+    let config: ConfigFile = match serde_json::from_str(&read_to_string(&args[1])?) {
         Ok(json) => json,
         Err(_) => {
             println!("{} invalid json?", &args[1]);
@@ -141,37 +131,30 @@ fn main() -> Result<(), Box<Error>> {
     // appending /raw to the directory to support raw text logs not from stdin
     let _ = create_dir_all(format!("{}/raw", &config.cachedir));
 
-    // determine our hostname.
-    #[allow(unused_assignments)]
-    let mut hostname = String::new();
-    if let Ok(mut file) = File::open("/etc/hostname") {
-        let mut buffer = String::new();
-        let _ = file.read_to_string(&mut buffer)?.to_string();
-        hostname = buffer.trim().to_string();
-    } else {
-        hostname = "localhost".to_string();
-    }
+    let hostname = read_to_string("/etc/hostname")
+        .unwrap_or_else(|_| "localhost".to_string())
+        .trim()
+        .to_string();
 
     // need the ipaddr of our interface. will be part of the metadata
     let mut ipaddr = String::new();
-    for iface in ifaces::Interface::get_all()? {
-        if iface.kind == ifaces::Kind::Ipv4 {
-            ipaddr = format!("{}", iface.addr.unwrap());
-            ipaddr = ipaddr.replace(":0", "");
+    for iface in get_if_addrs::get_if_addrs()? {
+        if !iface.is_loopback() {
+            ipaddr = iface.ip().to_string();
         }
-        continue;
     }
 
     // store hostname and ip address in our struct
     let system: SystemInfo = SystemInfo { hostname, ipaddr };
 
-    //
-    let message = format!(
-        "MAX_LINES: {}  MAX_BYTES: {}  MAX_TIMEOUT:{}",
-        MAX_LINES, MAX_BYTES, MAX_TIMEOUT
-    );
-
-    logging(&config.clone(), "info", &message).is_ok();
+    logging(
+        &config.clone(),
+        "info",
+        format!(
+            "MAX_LINES: {}  MAX_BYTES: {}  MAX_TIMEOUT:{}",
+            MAX_LINES, MAX_BYTES, MAX_TIMEOUT
+        )
+    ).is_ok();
 
     logging(
         &config.clone(),
