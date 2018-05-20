@@ -20,7 +20,7 @@ extern crate slog_async;
 extern crate slog_term;
 extern crate walkdir;
 
-use cadence::{prelude::*, BufferedUdpMetricSink, StatsdClient, DEFAULT_PORT};
+use cadence::{prelude::*, BufferedUdpMetricSink, QueuingMetricSink, StatsdClient, DEFAULT_PORT};
 use chrono::{prelude::Local, Datelike, Duration, Timelike};
 use crossbeam::scope;
 use elapsed::measure_time;
@@ -67,9 +67,10 @@ impl MetricRequestHandler {
         let socket: UdpSocket = UdpSocket::bind("0.0.0.0:0")?;
         socket.set_nonblocking(true)?;
         let host = ("localhost", DEFAULT_PORT);
-        let sink = BufferedUdpMetricSink::from(host, socket)?;
+        let udp_sink = BufferedUdpMetricSink::from(host, socket)?;
+        let queuing_sink = QueuingMetricSink::from(udp_sink);
         Ok(MetricRequestHandler {
-            metrics: Arc::new(StatsdClient::from_sink("s3post", sink))
+            metrics: Arc::new(StatsdClient::from_sink("s3post", queuing_sink))
         })
     }
 
