@@ -63,13 +63,14 @@ pub struct MetricRequestHandler {
 }
 
 impl MetricRequestHandler {
-    fn new() -> MetricRequestHandler {
-        let socket: UdpSocket = UdpSocket::bind("0.0.0.0:0").unwrap();
+    fn new() -> Result<MetricRequestHandler, Box<Error>> {
+        let socket: UdpSocket = UdpSocket::bind("0.0.0.0:0")?;
+        socket.set_nonblocking(true)?;
         let host = ("localhost", DEFAULT_PORT);
-        let sink = BufferedUdpMetricSink::from(host, socket).unwrap();
-        MetricRequestHandler {
+        let sink = BufferedUdpMetricSink::from(host, socket)?;
+        Ok(MetricRequestHandler {
             metrics: Arc::new(StatsdClient::from_sink("s3post", sink))
-        }
+        })
     }
 
     fn metric_time(&self, metric: &str, time: u64) -> Result<(), String> {
@@ -224,7 +225,7 @@ fn compress(
     config: ConfigFile,
     system: SystemInfo
 ) -> Result<(), Box<Error>> {
-    let metric = MetricRequestHandler::new();
+    let metric = MetricRequestHandler::new()?;
 
     // our compression routine will be sent to another thread
     // generate our local path
@@ -287,7 +288,7 @@ fn write_s3(
     path: &str,
     log: &[u8]
 ) -> Result<(), Box<Error>> {
-    let _metric = MetricRequestHandler::new();
+    let metric = MetricRequestHandler::new()?;
 
     // move to new thread
     let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
@@ -344,8 +345,8 @@ fn write_s3(
         // we were successful!
         Ok(_) => {
             // write metric to statsd
-            _metric.metric_count(1, "s3.write").is_ok();
-            _metric.metric_count(0, "s3.failure").is_ok();
+            metric.metric_count(1, "s3.write").is_ok();
+            metric.metric_count(0, "s3.failure").is_ok();
 
             // send some notifications
             logging(
@@ -378,14 +379,14 @@ fn write_s3(
                 "error",
                 &format!("Could not write {} to s3! {}", &file, e)
             ).is_ok();
-            _metric.metric_count(1, "s3.failure").is_ok();
+            metric.metric_count(1, "s3.failure").is_ok();
             Ok(())
         }
     }
 }
 
 fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error>> {
-    let _metric = MetricRequestHandler::new();
+    let metric = MetricRequestHandler::new()?;
 
     // prune empty directories as overtime we may exhaust inodes
     for entry in WalkDir::new(&config.cachedir)
@@ -438,7 +439,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error
                 &format!("Found unsent log {}/{}", &path, &filename)
             ).is_ok();
             // pass the unset logs to s3
-            _metric.metric_count(1, "s3.resend").is_ok();
+            metric.metric_count(1, "s3.resend").is_ok();
             write_s3(&config.clone(), &system.clone(), filename, path, &contents).is_ok();
         }
     }
@@ -475,7 +476,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error
                 &format!("Found unsent log {}/{}", &path, &filename)
             ).is_ok();
             // pass the unset logs to s3
-            _metric.metric_count(1, "s3.resend").is_ok();
+            metric.metric_count(1, "s3.resend").is_ok();
             write_s3(&config.clone(), &system.clone(), filename, path, &contents).is_ok();
         }
     };
