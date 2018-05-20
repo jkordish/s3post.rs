@@ -150,7 +150,7 @@ fn main() -> Result<(), Box<Error>> {
     logging(
         &config.clone(),
         "info",
-        format!(
+        &format!(
             "MAX_LINES: {}  MAX_BYTES: {}  MAX_TIMEOUT:{}",
             MAX_LINES, MAX_BYTES, MAX_TIMEOUT
         )
