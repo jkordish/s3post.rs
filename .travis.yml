@@ -1,19 +1,20 @@
 language: rust
 rust:
-  - nightly
+- nightly
+script:
+- cargo build --release
 cache: cargo
 before_deploy:
-  - git config --local user.name "jkordish"
-  - git config --local user.email "joe@unicornclouds.com"
-  - git tag "$(date +'%Y%m%d%H%M%S')-$(git log --format=%h -1)"
+- git config --local user.name "jkordish"
+- git config --local user.email "joe@unicornclouds.com"
+- git tag "$(date +'%Y%m%d%H%M%S')-$(git log --format=%h -1)"
 deploy:
   provider: releases
   api_key:
-    secure: AOh/GcWACC0FMez932PZufRVxZ0xKYuX3MfcJKuV/zfftCXyDvM8bxxxXb1KGlH6CD87Kj9WpALtHVb+Ci280n1TcshUTW+r/jcuveLCGr0Y9/KGxJV4SGopbTc9rrStrQQuCukz9/5RvvKRADsj+Fgnq/OjHiJNX8BXqcigX5mJnhoPtcnzY6nAUBTnHfvvco09nCpHG5KwlAdBjmOjsohGS9KVIpmW3FpgHLpOLyZo7h1Lk0v3Ey0C6op1uxLxJQ4CSh0dFuArs1tpmp556tfFx+8eD1esGHlM9pGwvjYh8ZMG+dgyj2B2Ph+Y6X84K2hMqYEMvSYgn5lsXT6cmudmr/ypaTF5VTLVcNMhFFL70Wg3o8BqPXgT/fZr5P1AvHamSVwbKZTc199qKVdBjaFR2M+RTpiYadOG0RUG76J2RMJx6qt3Wi90BMtx3QdZBZ+/cBTyAhPDq4xdLRzF5qHSXeaOokCttWljsv/BIGmjTTOthgUHrfdxUOgIqTfsism9Px3eKICIEWB/qxTytB/etFTDx7IVeQzncCtkQ6KgHt+hDnCUdSGGCODAAbmuycRhqbPvRObRr/ANSvFppgMmQbVwOFuxUCK9sb7QZV5mHJYNRXgzEriZnwRb7UCnQTQoawPhL2W5xJRVgjv2k61hOhSonVfxxZVGdIqPJT0=
+    secure: djRFwnvVaZWz9Sbf1rE/B+19wLioSvTg88C0HEhdAiEoSDFkcmzraltic0e9km7pycY516slJkXzYjV05gfi2hcTejmHpu0I/Lql5mMfE+dBttUX7ZDSxv8KiwMHQdMcTo7Ibv069XabJeuSNxvhiM5i346XGuhcCVMdiTcHYqrgl92wpVSsT24vori1NUKEhzzhjnqYxt4OgxSi0UPk0qJaKtRVi/wrI6uy0qYYRTAMuqgrCpP4KiwsetlFOZ2kpwWnwUWMOSB2oQjmSNiSgU9Af6/JsHcrJVVfISc75dysIsCIEtY5Z9DnoN6aU8YqsoimzE5DGWvhhlXXY0XFMThUGULq8GMwEIBaetAEMQCLZe/wnOU+Q2p8SqqMQ/MuVQ5Em9BasXwwhz6EsfJFuyYOgKCDaWZzAcUer5ay01hm11AggGDGLA6IYVzCfqb2lH633Xzov/rMaTeEX2QMaiVR5zoCGZkOMx+6IsiACwy1+cDQmKRnuV4qUuNMgS0GbPSN6DKw55U8lS7QZe3WiF4GsX4sq9YW9QkJ6rEqnxmBcXynPSmuo8mca0rvbXDLkS5NrR0njAWhQoYXPcbqQobzZ+3wNKn2uldQ1oYOj4CmE3Dd9uRyXnMGy6fA+/JoSY0/iCrXb2PJjeyHeoz8bg6RPDN1HrQYaN7XzfrHlOE=
   file: "./target/release/s3post"
-  script:
-    - cargo build --release
   on:
+    repo: jkordish/s3post.rs
     tags: true
   skip_cleanup: true
 sudo: false
