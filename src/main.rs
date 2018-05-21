@@ -25,7 +25,7 @@ use chrono::{prelude::Local, Datelike, Duration, Timelike};
 use crossbeam::scope;
 use elapsed::measure_time;
 use flate2::{write::GzEncoder, Compression};
-use rusoto_core::{AutoRefreshingProvider, Region};
+use rusoto_core::{reactor::RequestDispatcher, AutoRefreshingProvider, Region};
 use rusoto_s3::{PutObjectRequest, S3, S3Client};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
 use slog::Drain;
@@ -301,7 +301,7 @@ fn write_s3(
     let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(
         sts_client,
         config.role_arn.to_owned(),
-        "s3post".to_string(),
+        "s3post".to_owned(),
         None,
         None,
         None,
@@ -309,8 +309,8 @@ fn write_s3(
     );
 
     // allow our STS to auto-refresh
-    let _auto_sts_provider = match AutoRefreshingProvider::with_refcell(sts_provider) {
-        Ok(_auto_sts_provider) => _auto_sts_provider,
+    let auto_sts_provider = match AutoRefreshingProvider::with_refcell(sts_provider) {
+        Ok(auto_sts_provider) => auto_sts_provider,
         Err(_) => {
             logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
             exit(1)
@@ -318,7 +318,11 @@ fn write_s3(
     };
 
     // create our s3 client initialization
-    let s3 = S3Client::simple(Region::from_str(&config.region)?);
+    let s3 = S3Client::new(
+        RequestDispatcher::default(),
+        auto_sts_provider,
+        Region::from_str(&config.region)?
+    );
 
     // create a u8 vector
     let mut contents: Vec<u8> = Vec::new();
