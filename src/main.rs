@@ -1,5 +1,3 @@
-#![cfg_attr(feature = "clippy", plugin(clippy))]
-#![feature(plugin)]
 #![feature(nll)]
 #[cfg_attr(feature = "cargo-clippy", allow(clippy_pedantic))]
 extern crate cadence;
