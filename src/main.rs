@@ -1,5 +1,8 @@
-#![feature(nll)]
-#[cfg_attr(feature = "cargo-clippy", allow(clippy_pedantic))]
+// Opt in to unstable features expected for Rust 2018
+#![feature(rust_2018_preview)]
+// Opt in to warnings about new 2018 idioms
+#![feature(rust_2018_idioms)]
+#![cfg_attr(feature = "cargo-clippy", allow(clippy_pedantic))]
 extern crate cadence;
 extern crate chrono;
 extern crate crossbeam;
