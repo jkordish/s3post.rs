@@ -3,24 +3,6 @@
 // Opt in to warnings about new 2018 idioms
 #![feature(rust_2018_idioms)]
 #![cfg_attr(feature = "cargo-clippy", allow(clippy_pedantic))]
-extern crate cadence;
-extern crate chrono;
-extern crate crossbeam;
-extern crate elapsed;
-extern crate flate2;
-extern crate get_if_addrs;
-extern crate rusoto_core;
-extern crate rusoto_s3;
-extern crate rusoto_sts;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-#[macro_use]
-extern crate slog;
-extern crate rusoto_credential;
-extern crate slog_async;
-extern crate slog_term;
-extern crate walkdir;
 
 use cadence::{prelude::*, BufferedUdpMetricSink, QueuingMetricSink, StatsdClient, DEFAULT_PORT};
 use chrono::{prelude::Local, Datelike, Duration, Timelike};
@@ -31,7 +13,8 @@ use rusoto_core::Region;
 use rusoto_credential::AutoRefreshingProvider;
 use rusoto_s3::{PutObjectRequest, S3Client, StreamingBody, S3};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
-use slog::Drain;
+use serde_derive::{Deserialize, Serialize};
+use slog::{b, crit, error, info, kv, log, o, record, record_static, Drain};
 use std::{
     collections::HashMap,
     env,
@@ -313,7 +296,7 @@ fn write_s3(
     );
 
     // allow our STS to auto-refresh
-    let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
+    let _auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
         Ok(auto_sts_provider) => auto_sts_provider,
         Err(_) => {
             logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
@@ -325,11 +308,6 @@ fn write_s3(
 
     // create our s3 client initialization
     let s3 = S3Client::new(Region::from_str(&config.region)?);
-
-    // create a u8 vector
-    // let mut contents = Vec::new();
-    // add our encoded log file to the vector
-    // contents.extend(log);
 
     // generate our metadata which we add to the s3 upload
     let mut metadata = HashMap::new();
