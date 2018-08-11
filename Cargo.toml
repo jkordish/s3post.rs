@@ -1,6 +1,7 @@
 cargo-features = ["edition"]
 
 [package]
+edition     = '2018'
 name        = "s3post"
 version     = "0.1.19"
 authors     = ["Joseph Kordish <joe@unicornclouds.com>"]
@@ -9,7 +10,6 @@ homepage    = "https://github.com/jkordish/s3post.rs"
 repository  = "https://github.com/jkordish/s3post.rs"
 readme      = "README.md"
 license     = "The MIT License (MIT)"
-edition     = '2018'
 keywords    = [
   "aws",
   "logs",
@@ -22,23 +22,24 @@ path = "src/main.rs"
 
 
 [dependencies]
-slog         = "^2"
-slog-stdlog  = "^3"
-slog-term    = "^2"
-slog-async   = "^2"
-flate2       = { version = "^1", features = ["rust_backend"], default-features = false }
-crossbeam    = "^0.3"
-chrono       = "^0.4"
-get_if_addrs = "0.5"
-walkdir      = "^2"
-serde_json   = "^1"
-serde        = "^1"
-serde_derive = "^1"
-rusoto_core  = "0.32"
-rusoto_s3    = "0.32"
-rusoto_sts   = "0.32"
-cadence      = "0.14"
-elapsed      = "0.1"
+slog         = "*"
+slog-stdlog  = "*"
+slog-term    = "*"
+slog-async   = "*"
+flate2       = { version = "*", features = ["rust_backend"], default-features = false }
+crossbeam    = "*"
+chrono       = "*"
+get_if_addrs = "*"
+walkdir      = "*"
+serde_json   = "*"
+serde        = "*"
+serde_derive = "*"
+rusoto_core  = "*"
+rusoto_s3    = "*"
+rusoto_sts   = "*"
+rusoto_credential = "*"
+cadence      = "*"
+elapsed      = "*"
 
 [profile.release]
 opt-level        = 3

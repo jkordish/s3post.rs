@@ -17,6 +17,7 @@ extern crate serde_derive;
 extern crate serde_json;
 #[macro_use]
 extern crate slog;
+extern crate rusoto_credential;
 extern crate slog_async;
 extern crate slog_term;
 extern crate walkdir;
@@ -26,12 +27,14 @@ use chrono::{prelude::Local, Datelike, Duration, Timelike};
 use crossbeam::scope;
 use elapsed::measure_time;
 use flate2::{write::GzEncoder, Compression};
-use rusoto_core::{reactor::RequestDispatcher, AutoRefreshingProvider, Region};
-use rusoto_s3::{PutObjectRequest, S3, S3Client};
+use rusoto_core::Region;
+use rusoto_credential::AutoRefreshingProvider;
+use rusoto_s3::{PutObjectRequest, S3Client, StreamingBody, S3};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
 use slog::Drain;
 use std::{
-    collections::HashMap, env,
+    collections::HashMap,
+    env,
     fs::{create_dir_all, read_to_string, remove_dir, remove_file, File, OpenOptions},
     net::UdpSocket
 };
@@ -296,7 +299,7 @@ fn write_s3(
     let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
     // initiate our sts client
-    let sts_client = StsClient::simple(Region::from_str(&config.region)?);
+    let sts_client = StsClient::new(Region::from_str(&config.region)?);
 
     // generate a sts provider
     let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(
@@ -310,7 +313,7 @@ fn write_s3(
     );
 
     // allow our STS to auto-refresh
-    let auto_sts_provider = match AutoRefreshingProvider::with_refcell(sts_provider) {
+    let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
         Ok(auto_sts_provider) => auto_sts_provider,
         Err(_) => {
             logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
@@ -318,36 +321,40 @@ fn write_s3(
         }
     };
 
+    // auto_sts_provider.credentials().wait();
+
     // create our s3 client initialization
-    let s3 = S3Client::new(
-        RequestDispatcher::default(),
-        auto_sts_provider,
-        Region::from_str(&config.region)?
-    );
+    let s3 = S3Client::new(Region::from_str(&config.region)?);
 
     // create a u8 vector
-    let mut contents: Vec<u8> = Vec::new();
+    // let mut contents = Vec::new();
     // add our encoded log file to the vector
-    contents.extend(log);
+    // contents.extend(log);
 
     // generate our metadata which we add to the s3 upload
     let mut metadata = HashMap::new();
     metadata.insert("cbid".to_string(), system.hostname.to_string());
     metadata.insert("ip".to_string(), system.ipaddr.to_string());
-    metadata.insert("uncompressed_bytes".to_string(), contents.len().to_string());
-    metadata.insert("lines".to_string(), contents.lines().count().to_string());
+    metadata.insert(
+        "uncompressed_bytes".to_string(),
+        log.to_vec().len().to_string()
+    );
+    metadata.insert(
+        "lines".to_string(),
+        log.to_vec().lines().count().to_string()
+    );
 
     // if we can read the contents to the buffer we will attempt to send the log to s3
     // need to build our request
     let req = PutObjectRequest {
         bucket: config.bucket.to_owned(),
         key: s3path.to_owned(),
-        body: Some(contents),
+        body: Some(StreamingBody::from(log.to_vec())),
         metadata: Some(metadata),
         ..Default::default()
     };
 
-    match s3.put_object(&req).sync() {
+    match s3.put_object(req).sync() {
         // we were successful!
         Ok(_) => {
             // write metric to statsd
@@ -358,7 +365,7 @@ fn write_s3(
             logging(
                 &config.clone(),
                 "info",
-                &format!("Successfully wrote {}/{}", &req.bucket, &s3path)
+                &format!("Successfully wrote {}/{}", &config.bucket, &s3path)
             ).is_ok();
             // only remove the file if we are successful
             let localpath = format!("{}/{}/{}", &config.cachedir, &path, &file);
