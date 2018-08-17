@@ -304,7 +304,7 @@ fn write_s3(
     // allow our STS to auto-refresh
     // #[allow(unused_variables)]
     let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
-        Ok(auto_sts_provider) => auto_sts_provider.credentials().wait()?,
+        Ok(auto_sts_provider) => auto_sts_provider,
         Err(_) => {
             logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
             exit(1)
@@ -313,7 +313,7 @@ fn write_s3(
 
     println!("credentials");
     // #[allow(unused_variables)]
-    // let credentials = auto_sts_provider.credentials().wait()?;
+    let credentials = auto_sts_provider.credentials();
 
     println!("s3client");
     // create our s3 client initialization
