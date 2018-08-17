@@ -282,9 +282,11 @@ fn write_s3(
     // move to new thread
     let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
+    println!("std_client");
     // initiate our sts client
     let sts_client = StsClient::new(Region::from_str(&config.region)?);
 
+    println!("std_provider");
     // generate a sts provider
     let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(
         sts_client,
@@ -296,14 +298,17 @@ fn write_s3(
         None
     );
 
+    println!("credentials");
     #[allow(unused_variables)]
     let credentials = AutoRefreshingProvider::new(sts_provider)?
         .credentials()
         .wait()?;
 
+    println!("s3client");
     // create our s3 client initialization
     let s3 = S3Client::new(Region::from_str(&config.region)?);
 
+    println!("metadata");
     // generate our metadata which we add to the s3 upload
     let mut metadata = HashMap::new();
     metadata.insert("cbid".to_string(), system.hostname.to_string());
@@ -317,6 +322,7 @@ fn write_s3(
         log.to_vec().lines().count().to_string()
     );
 
+    println!("request");
     // if we can read the contents to the buffer we will attempt to send the log to s3
     // need to build our request
     let req = PutObjectRequest {
@@ -327,6 +333,7 @@ fn write_s3(
         ..Default::default()
     };
 
+    println!("s3.put_object");
     match s3.put_object(req).sync() {
         // we were successful!
         Ok(_) => {
