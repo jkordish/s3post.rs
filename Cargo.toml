@@ -3,7 +3,7 @@ cargo-features = ["edition"]
 [package]
 edition     = '2018'
 name        = "s3post"
-version     = "0.1.20"
+version     = "0.1.21"
 authors     = ["Joseph Kordish <joe@unicornclouds.com>"]
 description = "Post gzip compressed logs to S3"
 homepage    = "https://github.com/jkordish/s3post.rs"
