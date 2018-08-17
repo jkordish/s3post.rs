@@ -298,15 +298,15 @@ fn write_s3(
         None
     );
 
+    println!("s3client");
+    // create our s3 client initialization
+    let s3 = S3Client::new(Region::from_str(&config.region)?);
+
     println!("credentials");
     #[allow(unused_variables)]
     let credentials = AutoRefreshingProvider::new(sts_provider)?
         .credentials()
         .wait()?;
-
-    println!("s3client");
-    // create our s3 client initialization
-    let s3 = S3Client::new(Region::from_str(&config.region)?);
 
     println!("metadata");
     // generate our metadata which we add to the s3 upload
