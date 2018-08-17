@@ -302,8 +302,9 @@ fn write_s3(
 
     println!("auto_sts_provider");
     // allow our STS to auto-refresh
+    // #[allow(unused_variables)]
     let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
-        Ok(auto_sts_provider) => auto_sts_provider,
+        Ok(auto_sts_provider) => auto_sts_provider.credentials().wait()?,
         Err(_) => {
             logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
             exit(1)
@@ -312,7 +313,7 @@ fn write_s3(
 
     println!("credentials");
     // #[allow(unused_variables)]
-    let credentials = auto_sts_provider.credentials();
+    // let credentials = auto_sts_provider.credentials().wait()?;
 
     println!("s3client");
     // create our s3 client initialization
@@ -434,7 +435,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error
             // build out the complete path for reading
             let filepath = format!("{}/{}/{}", &config.cachedir, &path, &filename);
             // open the file for reading
-            let mut file = File::open(&filepath).unwrap();
+            let mut file = File::open(&filepath)?;
 
             // create a u8 vector
             let mut contents: Vec<u8> = Vec::new();
