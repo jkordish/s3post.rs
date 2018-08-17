@@ -1,7 +1,7 @@
 // Opt in to unstable features expected for Rust 2018
 #![feature(rust_2018_preview)]
 // Opt in to warnings about new 2018 idioms
-#![feature(rust_2018_idioms)]
+// #![feature(rust_2018_idioms)]
 #![cfg_attr(feature = "cargo-clippy", allow(clippy_pedantic))]
 
 use cadence::{prelude::*, BufferedUdpMetricSink, QueuingMetricSink, StatsdClient, DEFAULT_PORT};
@@ -9,8 +9,9 @@ use chrono::{prelude::Local, Datelike, Duration, Timelike};
 use crossbeam::scope;
 use elapsed::measure_time;
 use flate2::{write::GzEncoder, Compression};
+use futures::future::Future;
 use rusoto_core::Region;
-use rusoto_credential::AutoRefreshingProvider;
+use rusoto_credential::{AutoRefreshingProvider, ProvideAwsCredentials};
 use rusoto_s3::{PutObjectRequest, S3Client, StreamingBody, S3};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
 use serde_derive::{Deserialize, Serialize};
@@ -295,16 +296,10 @@ fn write_s3(
         None
     );
 
-    // allow our STS to auto-refresh
-    let _auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
-        Ok(auto_sts_provider) => auto_sts_provider,
-        Err(_) => {
-            logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
-            exit(1)
-        }
-    };
-
-    // auto_sts_provider.credentials().wait();
+    #[allow(unused_variables)]
+    let credentials = AutoRefreshingProvider::new(sts_provider)?
+        .credentials()
+        .wait()?;
 
     // create our s3 client initialization
     let s3 = S3Client::new(Region::from_str(&config.region)?);

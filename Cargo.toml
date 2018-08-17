@@ -40,6 +40,7 @@ rusoto_sts   = "*"
 rusoto_credential = "*"
 cadence      = "*"
 elapsed      = "*"
+futures      = "*"
 
 [profile.release]
 opt-level        = 3
