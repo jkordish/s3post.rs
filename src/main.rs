@@ -382,11 +382,11 @@ fn write_s3(
         }
         Err(e) => {
             // send some notifications
-            logging(
+            let _ = logging(
                 &config.clone(),
                 "error",
                 &format!("Could not write {} to s3! {}", &file, e)
-            ).is_ok();
+            );
             metric.metric_count(1, "s3.failure").is_ok();
             Ok(())
         }
