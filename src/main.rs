@@ -11,7 +11,9 @@ use elapsed::measure_time;
 use flate2::{write::GzEncoder, Compression};
 use futures::future::Future;
 use rusoto_core::Region;
-use rusoto_credential::{AutoRefreshingProvider, ProvideAwsCredentials};
+use rusoto_credential::{
+    AutoRefreshingProvider, DefaultCredentialsProvider, ProvideAwsCredentials
+};
 use rusoto_s3::{PutObjectRequest, S3Client, StreamingBody, S3};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
 use serde_derive::{Deserialize, Serialize};
@@ -296,17 +298,31 @@ fn write_s3(
         None,
         None,
         None
-    );
+    ).credentials()
+    .wait()
+    .unwrap();
+
+    println!("credentials");
+    // #[allow(unused_variables)]
+    // let credentials = sts_provider.unwrap().credentials().wait().unwrap();
+
+    // allow our STS to auto-refresh
+    // let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
+    //     Ok(auto_sts_provider) => auto_sts_provider,
+    //     Err(_) => {
+    //         logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
+    //         exit(1)
+    //     }
+    // };
 
     println!("s3client");
     // create our s3 client initialization
     let s3 = S3Client::new(Region::from_str(&config.region)?);
-
-    println!("credentials");
-    #[allow(unused_variables)]
-    let credentials = AutoRefreshingProvider::new(sts_provider)?
-        .credentials()
-        .wait()?;
+    // let s3 = S3Client::new_with(
+    //     Default::default(),
+    //     auto_sts_provider,
+    //     Region::from_str(&config.region)?
+    // );
 
     println!("metadata");
     // generate our metadata which we add to the s3 upload
