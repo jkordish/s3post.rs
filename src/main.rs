@@ -284,11 +284,11 @@ fn write_s3(
     // move to new thread
     let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
-    println!("std_client");
+    println!("sts_client");
     // initiate our sts client
     let sts_client = StsClient::new(Region::from_str(&config.region)?);
 
-    println!("std_provider");
+    println!("sts_provider");
     // generate a sts provider
     let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(
         sts_client,
@@ -298,22 +298,21 @@ fn write_s3(
         None,
         None,
         None
-    ).credentials()
-    .wait()
-    .unwrap();
+    );
+
+    println!("auto_sts_provider");
+    // allow our STS to auto-refresh
+    let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
+        Ok(auto_sts_provider) => auto_sts_provider,
+        Err(_) => {
+            logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
+            exit(1)
+        }
+    };
 
     println!("credentials");
     // #[allow(unused_variables)]
-    // let credentials = sts_provider.unwrap().credentials().wait().unwrap();
-
-    // allow our STS to auto-refresh
-    // let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
-    //     Ok(auto_sts_provider) => auto_sts_provider,
-    //     Err(_) => {
-    //         logging(&config.clone(), "crit", "Unable to obtain STS token").is_ok();
-    //         exit(1)
-    //     }
-    // };
+    let credentials = auto_sts_provider.credentials();
 
     println!("s3client");
     // create our s3 client initialization
