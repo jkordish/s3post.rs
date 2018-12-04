@@ -1,23 +1,16 @@
-// Opt in to unstable features expected for Rust 2018
-#![feature(rust_2018_preview)]
-// Opt in to warnings about new 2018 idioms
-// #![feature(rust_2018_idioms)]
-#![cfg_attr(feature = "cargo-clippy", allow(clippy_pedantic))]
+#![cfg_attr(feature = "cargo-clippy", allow(renamed_and_removed_lints))]
 
 use cadence::{prelude::*, BufferedUdpMetricSink, QueuingMetricSink, StatsdClient, DEFAULT_PORT};
 use chrono::{prelude::Local, Datelike, Duration, Timelike};
 use crossbeam::scope;
 use elapsed::measure_time;
 use flate2::{write::GzEncoder, Compression};
-use futures::future::Future;
-use rusoto_core::Region;
-use rusoto_credential::{
-    AutoRefreshingProvider, DefaultCredentialsProvider, ProvideAwsCredentials
-};
+use rusoto_core::{request::HttpClient, Region};
+use rusoto_credential::{AutoRefreshingProvider, DefaultCredentialsProvider};
 use rusoto_s3::{PutObjectRequest, S3Client, StreamingBody, S3};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
 use serde_derive::{Deserialize, Serialize};
-use slog::{b, crit, error, info, kv, log, o, record, record_static, Drain};
+use slog::{crit, error, info, o, Drain};
 use std::{
     collections::HashMap,
     env,
@@ -146,13 +139,15 @@ fn main() -> Result<(), Box<Error>> {
             "MAX_LINES: {}  MAX_BYTES: {}  MAX_TIMEOUT:{}",
             MAX_LINES, MAX_BYTES, MAX_TIMEOUT
         )
-    ).is_ok();
+    )
+    .is_ok();
 
     logging(
         &config.clone(),
         "info",
         &format!("Hostname: {}  ipAddr: {}", &system.hostname, &system.ipaddr)
-    ).is_ok();
+    )
+    .is_ok();
 
     // create the cachedir in case it isn't there already
     let _ = create_dir_all(&config.cachedir);
@@ -183,10 +178,11 @@ fn main() -> Result<(), Box<Error>> {
                 {
                     // send the data to the compress function via separate thread
                     scope(|scope| {
-                        scope.spawn(|| {
+                        scope.spawn(|_| {
                             compress(&data.clone(), time, config.clone(), system.clone()).is_ok();
                         });
-                    });
+                    })
+                    .is_ok();
                     // clear our data vector
                     data.clear();
                     // reset our timer
@@ -197,10 +193,11 @@ fn main() -> Result<(), Box<Error>> {
                         // update the time
                         time = Local::now();
                         // attempt to resend any logs that we might have not successfully sent
-                        scope.spawn(|| {
-                            resend_logs(&config.clone(), &system.clone()).unwrap();
+                        scope.spawn(|_| {
+                            resend_logs(&config.clone(), &system.clone()).is_ok();
                         });
-                    });
+                    })
+                    .is_ok();
                 }
             }
             Err(err) => panic!(err)
@@ -264,11 +261,12 @@ fn compress(
 
     // move to new thread
     scope(|scope| {
-        scope.spawn(move || {
+        scope.spawn(move |_| {
             // call write_s3 to send the gzip'd file to s3
             write_s3(&config.clone(), &system.clone(), &file, &path, &log).is_ok();
         });
-    });
+    })
+    .is_ok();
     Ok(())
 }
 
@@ -284,11 +282,16 @@ fn write_s3(
     // move to new thread
     let s3path = format!("{}/{}/{}", &config.prefix, &path, &file);
 
+    let credentials = DefaultCredentialsProvider::new();
+
     println!("sts_client");
     // initiate our sts client
-    let sts_client = StsClient::new(Region::from_str(&config.region)?);
+    let sts_client = StsClient::new_with(
+        HttpClient::new()?,
+        credentials?,
+        Region::from_str(&config.region)?
+    );
 
-    println!("sts_provider");
     // generate a sts provider
     let sts_provider = StsAssumeRoleSessionCredentialsProvider::new(
         sts_client,
@@ -300,9 +303,8 @@ fn write_s3(
         None
     );
 
-    println!("auto_sts_provider");
     // allow our STS to auto-refresh
-    // #[allow(unused_variables)]
+    #[allow(unused_variables)]
     let auto_sts_provider = match AutoRefreshingProvider::new(sts_provider) {
         Ok(auto_sts_provider) => auto_sts_provider,
         Err(_) => {
@@ -311,20 +313,13 @@ fn write_s3(
         }
     };
 
-    println!("credentials");
-    // #[allow(unused_variables)]
-    let credentials = auto_sts_provider.credentials();
-
-    println!("s3client");
     // create our s3 client initialization
-    let s3 = S3Client::new(Region::from_str(&config.region)?);
-    // let s3 = S3Client::new_with(
-    //     Default::default(),
-    //     auto_sts_provider,
-    //     Region::from_str(&config.region)?
-    // );
+    let s3 = S3Client::new_with(
+        HttpClient::new()?,
+        auto_sts_provider,
+        Region::from_str(&config.region)?
+    );
 
-    println!("metadata");
     // generate our metadata which we add to the s3 upload
     let mut metadata = HashMap::new();
     metadata.insert("cbid".to_string(), system.hostname.to_string());
@@ -338,7 +333,6 @@ fn write_s3(
         log.to_vec().lines().count().to_string()
     );
 
-    println!("request");
     // if we can read the contents to the buffer we will attempt to send the log to s3
     // need to build our request
     let req = PutObjectRequest {
@@ -349,7 +343,6 @@ fn write_s3(
         ..Default::default()
     };
 
-    println!("s3.put_object");
     match s3.put_object(req).sync() {
         // we were successful!
         Ok(_) => {
@@ -362,7 +355,8 @@ fn write_s3(
                 &config.clone(),
                 "info",
                 &format!("Successfully wrote {}/{}", &config.bucket, &s3path)
-            ).is_ok();
+            )
+            .is_ok();
             // only remove the file if we are successful
             let localpath = format!("{}/{}/{}", &config.cachedir, &path, &file);
             if remove_file(&localpath).is_ok() {
@@ -446,7 +440,8 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error
                 &config.clone(),
                 "info",
                 &format!("Found unsent log {}/{}", &path, &filename)
-            ).is_ok();
+            )
+            .is_ok();
             // pass the unset logs to s3
             metric.metric_count(1, "s3.resend").is_ok();
             write_s3(&config.clone(), &system.clone(), filename, path, &contents).is_ok();
@@ -483,7 +478,8 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error
                 &config.clone(),
                 "info",
                 &format!("Found unsent log {}/{}", &path, &filename)
-            ).is_ok();
+            )
+            .is_ok();
             // pass the unset logs to s3
             metric.metric_count(1, "s3.resend").is_ok();
             write_s3(&config.clone(), &system.clone(), filename, path, &contents).is_ok();
