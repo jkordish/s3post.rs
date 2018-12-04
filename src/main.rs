@@ -1,4 +1,7 @@
-#![cfg_attr(feature = "cargo-clippy", allow(renamed_and_removed_lints))]
+#![cfg_attr(
+    feature = "cargo-clippy",
+    allow(renamed_and_removed_lints, clippy::pedantic)
+)]
 
 use cadence::{prelude::*, BufferedUdpMetricSink, QueuingMetricSink, StatsdClient, DEFAULT_PORT};
 use chrono::{prelude::Local, Datelike, Duration, Timelike};
