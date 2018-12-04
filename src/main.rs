@@ -287,7 +287,6 @@ fn write_s3(
 
     let credentials = DefaultCredentialsProvider::new();
 
-    println!("sts_client");
     // initiate our sts client
     let sts_client = StsClient::new_with(
         HttpClient::new()?,
