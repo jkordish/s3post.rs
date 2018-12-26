@@ -2,26 +2,33 @@
     feature = "cargo-clippy",
     allow(renamed_and_removed_lints, clippy::pedantic)
 )]
+#![feature(duration_as_u128)]
+#![warn(rust_2018_idioms)]
 
 use cadence::{prelude::*, BufferedUdpMetricSink, QueuingMetricSink, StatsdClient, DEFAULT_PORT};
 use chrono::{prelude::Local, Datelike, Duration, Timelike};
-use crossbeam::scope;
-use elapsed::measure_time;
+use crossbeam_utils::thread::scope;
 use flate2::{write::GzEncoder, Compression};
 use rusoto_core::{request::HttpClient, Region};
 use rusoto_credential::{AutoRefreshingProvider, DefaultCredentialsProvider};
 use rusoto_s3::{PutObjectRequest, S3Client, StreamingBody, S3};
 use rusoto_sts::{StsAssumeRoleSessionCredentialsProvider, StsClient};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use slog::{crit, error, info, o, Drain};
 use std::{
     collections::HashMap,
     env,
+    error::Error,
     fs::{create_dir_all, read_to_string, remove_dir, remove_file, File, OpenOptions},
-    net::UdpSocket
-};
-use std::{
-    error::Error, io, io::prelude::*, path::Path, process::exit, str::FromStr, sync::Arc, thread
+    io,
+    io::prelude::*,
+    net::UdpSocket,
+    path::Path,
+    process::exit,
+    str::FromStr,
+    sync::Arc,
+    thread,
+    time::Instant
 };
 use walkdir::WalkDir;
 
@@ -45,11 +52,11 @@ struct SystemInfo {
 }
 
 pub struct MetricRequestHandler {
-    metrics: Arc<MetricClient + Send + Sync>
+    metrics: Arc<dyn MetricClient + Send + Sync>
 }
 
 impl MetricRequestHandler {
-    fn new() -> Result<MetricRequestHandler, Box<Error>> {
+    fn new() -> Result<MetricRequestHandler, Box<dyn Error>> {
         let socket: UdpSocket = UdpSocket::bind("0.0.0.0:0")?;
         socket.set_nonblocking(true)?;
         let host = ("localhost", DEFAULT_PORT);
@@ -97,7 +104,7 @@ const MAX_LINES: usize = 50_000;
 const MAX_BYTES: usize = 10_485_760;
 const MAX_TIMEOUT: i64 = 30;
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = env::args().collect();
     if args.is_empty() {
         println!("s3post <config.json>");
@@ -215,7 +222,7 @@ fn compress(
     timestamp: chrono::DateTime<chrono::Local>,
     config: ConfigFile,
     system: SystemInfo
-) -> Result<(), Box<Error>> {
+) -> Result<(), Box<dyn Error>> {
     let metric = MetricRequestHandler::new()?;
 
     // our compression routine will be sent to another thread
@@ -250,7 +257,9 @@ fn compress(
     let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
 
     // encode the retrieved bytes
-    let (elapsed, _) = measure_time(|| encoder.write_all(bytes).unwrap());
+    let elapsed = Instant::now();
+    encoder.write_all(bytes).unwrap();
+    let elapsed = elapsed.elapsed().as_millis();
     let log = encoder.finish()?;
 
     // write out the encoded data to our file
@@ -258,7 +267,7 @@ fn compress(
 
     // dump metrics to statsd
     metric
-        .metric_time("log.compress.time", elapsed.millis())
+        .metric_time("log.compress.time", elapsed as u64)
         .is_ok();
     metric.metric_count(1, "log.compress.count").is_ok();
 
@@ -279,7 +288,7 @@ fn write_s3(
     file: &str,
     path: &str,
     log: &[u8]
-) -> Result<(), Box<Error>> {
+) -> Result<(), Box<dyn Error>> {
     let metric = MetricRequestHandler::new()?;
 
     // move to new thread
@@ -390,7 +399,7 @@ fn write_s3(
     }
 }
 
-fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error>> {
+fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<dyn Error>> {
     let metric = MetricRequestHandler::new()?;
 
     // prune empty directories as overtime we may exhaust inodes
@@ -490,7 +499,7 @@ fn resend_logs(config: &ConfigFile, system: &SystemInfo) -> Result<(), Box<Error
     Ok(())
 }
 
-fn logging(config: &ConfigFile, log_type: &str, msg: &str) -> Result<(), Box<Error>> {
+fn logging(config: &ConfigFile, log_type: &str, msg: &str) -> Result<(), Box<dyn Error>> {
     // log to logfile otherwise to stdout
     let config = &config.clone();
 
