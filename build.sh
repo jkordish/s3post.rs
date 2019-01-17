@@ -11,7 +11,7 @@
 # found using a docker container pre-setup for musl was the easiest though
 ###
 
-docker run --rm -it -v "$(pwd)":/home/rust/src ekidd/rust-musl-builder:nightly cargo build --release
+docker run --rm -it -v "$(pwd)":/volume clux/muslrust:nightly cargo build --release
 
 sleep 3
 
