@@ -19,22 +19,22 @@ name = "s3post"
 path = "src/main.rs"
 
 [dependencies]
-slog              = "2.4.1"
-slog-stdlog       = "3.0.2"
-slog-term         = "2.4.0"
+slog              = "2.5.2"
+slog-stdlog       = "4.0.0"
+slog-term         = "2.4.2"
 slog-async        = "2.3.0"
-flate2            = { version="1.0.6", features=["rust_backend"], default-features=false }
-crossbeam-utils   = { version="0.6.3", default_features=false, features=["nightly"] }
-chrono            = "0.4.6"
+flate2            = { version = "1.0.13", default-features = false, features = ["rust_backend"] }
+crossbeam-utils   = { version = "0.7.0", default_features = false, features = ["nightly"] }
+chrono            = "0.4.10"
 get_if_addrs      = "0.5.3"
-walkdir           = "2.2.7"
-serde_json        = "1.0.36"
-serde             = { version="1.0.84", default-features=false, features = ['derive'] }
-rusoto_core       = { version="0.36.0", default_features=false, features=["rustls"] }
-rusoto_s3         = { version="0.36.0", default_features=false, features=["rustls"] }
-rusoto_sts        = { version="0.36.0", default_features=false, features=["rustls"] }
-rusoto_credential = "0.15.0"
-cadence           = "0.16.0"
+walkdir           = "2.3.1"
+serde_json        = "1.0.44"
+serde             = { version = "1.0.104", default-features = false, features = ['derive'] }
+rusoto_core       = { version = "0.42.0", default_features = false, features = ["rustls"] }
+rusoto_s3         = { version = "0.42.0", default_features = false, features = ["rustls"] }
+rusoto_sts        = { version = "0.42.0", default_features = false, features = ["rustls"] }
+rusoto_credential = "0.42.0"
+cadence           = "0.19.1"
 
 [profile.release]
 codegen-units    = 1
